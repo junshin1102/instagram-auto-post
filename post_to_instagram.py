@@ -121,14 +121,22 @@ def add_label(image_path: Path, text: str) -> None:
 
 
 def extract_item_code(title: str) -> str | None:
-    match = re.match(r"^([A-Za-z]{1,5}-\d+)", title.strip())
-    return match.group(1) if match else None
+    """商品タイトルから商品番号(例: SKR-529)を取り出す。
+    「送料無料！」のような接頭辞が商品番号の前に付いている場合もあるため、
+    先頭固定ではなく全体から探す。"""
+    match = re.search(r"[A-Za-z]{1,5}-\d+", title)
+    return match.group(0) if match else None
 
 
 def extract_species_name(title: str) -> str | None:
-    """商品タイトルから、商品番号の直後・寸法の手前にある樹種名を1つ取り出す。"""
-    segments = [seg for seg in title.split("　") if seg]
-    for seg in segments[1:]:
+    """商品タイトルから、商品番号の直後・寸法の手前にある樹種名を1つ取り出す。
+    出品によって全角/半角スペースが混在するため、空白全般で区切る。"""
+    segments = title.split()
+    code_index = next(
+        (i for i, seg in enumerate(segments) if re.search(r"[A-Za-z]{1,5}-\d+", seg)),
+        -1,
+    )
+    for seg in segments[code_index + 1:]:
         if re.search(r"\d+mm[×xX]", seg):
             break
         return seg
