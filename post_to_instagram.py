@@ -242,7 +242,17 @@ def fetch_yahoo_auction_item(url: str) -> dict | None:
 
 
 def format_auction_facts(item: dict) -> str:
-    lines = [f"商品タイトル: {item['title']}"]
+    title = item["title"]
+    lines = [f"商品タイトル: {title}"]
+
+    code_match = re.match(r"^([A-Za-z]{1,5}-\d+)", title.strip())
+    if code_match:
+        lines.append(f"商品番号: {code_match.group(1)}")
+
+    dimensions_match = re.search(r"\d+mm[×xX][^\s　【]+mm[×xX][^\s　【]+mm", title)
+    if dimensions_match:
+        lines.append(f"寸法: {dimensions_match.group(0)}")
+
     description = "\n".join(item.get("description") or [])
     if description:
         lines.append(f"商品説明: {description}")
@@ -379,7 +389,20 @@ def generate_caption(image_path: Path, metadata: str | None = None) -> str:
 - 上記に書かれていないことについては、樹種名や正確な寸法を断定しないこと
 - 「なかなか出ない」「珍しい」「うちでも多くない」のような希少性・頻度に関する
   主張は、上記の事実情報に明記されていない限り書かないこと\
-  (実際にはよくあるサイズ・樹種かもしれないため、根拠のない誇張は厳禁)"""
+  (実際にはよくあるサイズ・樹種かもしれないため、根拠のない誇張は厳禁)
+
+【必ず含める情報(絶対厳守)】
+- 上記の事実情報に「商品番号」が書かれている場合は、その番号(例: SKR-529)を\
+  本文中に必ずそのまま記載すること(「商品番号 SKR-529」のように自然な形で組み込む)
+- 上記の事実情報に「寸法」が書かれている場合は、その数値をそのまま本文中に必ず記載すること
+- どちらも省略せず、本文のどこかに含めること
+
+【樹種の特徴について】
+- 上記の事実情報(商品タイトルなど)から樹種名が分かる場合、その樹種について\
+  一般的に知られている特徴(木目や色合いの傾向、硬さ・耐久性、香り、\
+  よく使われる用途など)を、あなたの知識をもとに1〜2文程度加えること
+- 樹種名がはっきり分からない場合や、その樹種について確実な知識がない場合は、\
+  無理に特徴を書かず、見た目から分かる範囲の描写にとどめること"""
     else:
         fact_section = """【この画像の事実情報】
 - 事実情報のメモは提供されていない
