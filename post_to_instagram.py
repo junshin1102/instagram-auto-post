@@ -24,6 +24,7 @@ from pathlib import Path
 import requests
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from PIL import Image
 
 load_dotenv()
 
@@ -52,6 +53,30 @@ SELLER_URL = os.environ.get(
     "YAHOO_SELLER_URL",
     "https://auctions.yahoo.co.jp/seller/7F3TQFS83hRevxWX9wK4z2ZvPzj3t?user_type=c",
 )
+LOGO_PATH = ROOT_DIR / "assets" / "logo_watermark.png"
+WATERMARK_MAX_IMAGES = 9
+WATERMARK_WIDTH_RATIO = 0.22
+WATERMARK_MARGIN_RATIO = 0.03
+
+
+def add_watermark(image_path: Path) -> None:
+    """画像の右下にロゴ(assets/logo_watermark.png)を合成する。"""
+    with Image.open(image_path) as base:
+        base = base.convert("RGBA")
+        with Image.open(LOGO_PATH) as logo:
+            logo = logo.convert("RGBA")
+            logo_width = int(base.width * WATERMARK_WIDTH_RATIO)
+            logo_height = int(logo.height * (logo_width / logo.width))
+            logo = logo.resize((logo_width, logo_height))
+
+            margin = int(base.width * WATERMARK_MARGIN_RATIO)
+            position = (
+                base.width - logo_width - margin,
+                base.height - logo_height - margin,
+            )
+            base.paste(logo, position, mask=logo)
+
+        base.convert("RGB").save(image_path, quality=95)
 
 
 def notify_line(message: str) -> None:
@@ -305,6 +330,8 @@ def download_auction_images(item: dict, stem: str) -> list[Path]:
         ext = Path(image_url.split("?")[0]).suffix or ".jpg"
         dest = QUEUE_DIR / f"{stem}-{index}{ext}"
         dest.write_bytes(resp.content)
+        if index <= WATERMARK_MAX_IMAGES:
+            add_watermark(dest)
         downloaded.append(dest)
     return downloaded
 
