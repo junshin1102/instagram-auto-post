@@ -79,9 +79,19 @@ https://cloudinary.com/ の無料プランに登録し、ダッシュボード�
 - API Key → `CLOUDINARY_API_KEY`
 - API Secret → `CLOUDINARY_API_SECRET`
 
-### 5. GitHub Secretsに登録
+### 5. LINE通知を設定する(任意)
 
-リポジトリの `Settings > Secrets and variables > Actions > New repository secret` から、以下6つを登録します。
+投稿の成功・失敗をLINEに通知したい場合は設定してください。LINE Notifyは2025年に終了したため、後継の「LINE Messaging API」を使います。
+
+1. https://www.linebiz.com/jp/entry/ からLINE公式アカウントを新規作成(無料)
+2. https://developers.line.biz/console/ を開き、作成した公式アカウントに対応するプロバイダーを選択
+3. 「Messaging API」チャネルが自動的に作られているので、それを開く
+4. 「Messaging API設定」タブの一番下、「チャネルアクセストークン(長期)」で **発行** をクリックして値を控える(`LINE_CHANNEL_ACCESS_TOKEN`)
+5. 同じ画面に表示されているQRコードを、**ご自身のLINEアプリで友だち追加**する(これをしないと通知が届きません)
+
+### 6. GitHub Secretsに登録
+
+リポジトリの `Settings > Secrets and variables > Actions > New repository secret` から、以下を登録します。
 
 - `IG_USER_ID`
 - `IG_ACCESS_TOKEN`
@@ -89,8 +99,9 @@ https://cloudinary.com/ の無料プランに登録し、ダッシュボード�
 - `CLOUDINARY_CLOUD_NAME`
 - `CLOUDINARY_API_KEY`
 - `CLOUDINARY_API_SECRET`
+- `LINE_CHANNEL_ACCESS_TOKEN` (LINE通知を使う場合のみ)
 
-### 6. 画像は基本的に何もしなくてOK
+### 7. 画像は基本的に何もしなくてOK
 
 `images/queue/` が空であれば、毎日自動でヤフオクの出品(https://auctions.yahoo.co.jp/seller/7F3TQFS83hRevxWX9wK4z2ZvPzj3t?user_type=c)からランダムに1商品選んで投稿します。出品者ページのURLが変わった場合は、[post_to_instagram.py](post_to_instagram.py)内の `SELLER_URL` を書き換えてください。
 
@@ -114,7 +125,7 @@ images/queue/01_kobo.jpg
 images/queue/01_kobo.txt   ← 「ケヤキ、長さ280cm、耳付き」のように一言メモ
 ```
 
-### 7. 動作確認(手動実行)
+### 8. 動作確認(手動実行)
 
 GitHubリポジトリの `Actions > Daily Instagram Post > Run workflow` から、cronを待たずに手動実行できます。まずは1枚テスト用の画像をキューに入れて手動実行し、実際に投稿されるか確認することをおすすめします。
 

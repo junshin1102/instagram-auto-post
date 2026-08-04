@@ -32,6 +32,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         run: python post_to_instagram.py
 
       - name: Commit posted image + log
@@ -44,4 +45,16 @@ jobs:
             git push
           else
             echo "No changes to commit."
+          fi
+
+      - name: Notify LINE on workflow-level failure
+        if: failure()
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          if [ -n "$LINE_CHANNEL_ACCESS_TOKEN" ]; then
+            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+              -d '{"messages":[{"type":"text","text":"⚠️ Instagram自動投稿のワークフローが失敗しました。GitHub ActionsのActionsタブでログを確認してください。"}]}'
           fi

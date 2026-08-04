@@ -54,6 +54,26 @@ SELLER_URL = os.environ.get(
     "https://auctions.yahoo.co.jp/seller/7F3TQFS83hRevxWX9wK4z2ZvPzj3t?user_type=c",
 )
 
+
+def notify_line(message: str) -> None:
+    """LINE公式アカウント(Messaging API)経由で、自分宛てに通知を送る。
+    通知の失敗は投稿処理自体を止めないよう、例外を握りつぶす。"""
+    token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+    if not token:
+        return
+    try:
+        requests.post(
+            "https://api.line.me/v2/bot/message/broadcast",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            json={"messages": [{"type": "text", "text": message}]},
+            timeout=15,
+        )
+    except Exception:
+        pass
+
 BRAND_CONTEXT = """\
 アカウント: @junshin_industry (森からつくる木の生活道具 Junshin -潤森-)
 所在地: 新潟県阿賀野市の山林に囲まれた小さな木工房 (2014年creation)
@@ -601,10 +621,17 @@ def main() -> None:
 
     print(f"画像を images/posted/ に移動し、ログを記録しました。")
 
+    first_line = caption.strip().splitlines()[0]
+    notify_line(
+        f"✅ Instagramに投稿しました\n\n{first_line}\n\n画像: {len(posted_paths)}枚\n"
+        f"https://www.instagram.com/junshin_industry/"
+    )
+
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
         print(f"エラー: {exc}", file=sys.stderr)
+        notify_line(f"⚠️ Instagram自動投稿でエラーが発生しました\n\n{exc}")
         sys.exit(1)
