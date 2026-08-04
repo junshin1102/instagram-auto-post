@@ -92,6 +92,9 @@ def add_label(image_path: Path, text: str) -> None:
 
         font_size = max(24, int(base.width * LABEL_FONT_SIZE_RATIO))
         font = ImageFont.truetype(str(FONT_PATH), font_size)
+        axis_names = {axis["name"] for axis in font.get_variation_axes()}
+        if b"Weight" in axis_names:
+            font.set_variation_by_axes([700])  # Bold
 
         margin = int(base.width * LABEL_MARGIN_RATIO)
         padding = int(font_size * 0.4)
@@ -105,12 +108,12 @@ def add_label(image_path: Path, text: str) -> None:
             margin + text_width + padding * 2,
             margin + text_height + padding * 2,
         )
-        draw.rectangle(box, fill=(255, 255, 255, 200))
+        draw.rectangle(box, fill=(255, 255, 255, 235))
         draw.text(
             (margin + padding - text_bbox[0], margin + padding - text_bbox[1]),
             text,
             font=font,
-            fill=(30, 30, 30, 255),
+            fill=(0, 0, 0, 255),
         )
 
         combined = Image.alpha_composite(base, overlay)
