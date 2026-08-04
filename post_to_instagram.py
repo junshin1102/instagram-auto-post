@@ -135,6 +135,11 @@ def extract_species_name(title: str) -> str | None:
     return None
 
 
+def extract_dimensions(title: str) -> str | None:
+    match = re.search(r"\d+mm[×xX][^\s　【]+mm[×xX][^\s　【]+mm", title)
+    return match.group(0) if match else None
+
+
 def notify_line(message: str) -> None:
     """LINE公式アカウント(Messaging API)経由で、自分宛てに通知を送る。
     通知の失敗は投稿処理自体を止めないよう、例外を握りつぶす。"""
@@ -305,9 +310,9 @@ def format_auction_facts(item: dict) -> str:
     if code:
         lines.append(f"商品番号: {code}")
 
-    dimensions_match = re.search(r"\d+mm[×xX][^\s　【]+mm[×xX][^\s　【]+mm", title)
-    if dimensions_match:
-        lines.append(f"寸法: {dimensions_match.group(0)}")
+    dimensions = extract_dimensions(title)
+    if dimensions:
+        lines.append(f"寸法: {dimensions}")
 
     description = "\n".join(item.get("description") or [])
     if description:
@@ -388,7 +393,12 @@ def download_auction_images(item: dict, stem: str) -> list[Path]:
 
     species = extract_species_name(item["title"])
     code = extract_item_code(item["title"])
-    label_text = "  ".join(part for part in (species, code) if part)
+    dimensions = extract_dimensions(item["title"])
+    label_lines = [
+        "  ".join(part for part in (species, code) if part),
+        dimensions or "",
+    ]
+    label_text = "\n".join(line for line in label_lines if line)
 
     downloaded = []
     for index, image in enumerate(images, start=1):
