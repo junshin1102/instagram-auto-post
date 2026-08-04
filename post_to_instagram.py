@@ -42,7 +42,6 @@ POSTED_AUCTION_IDS_PATH = POSTED_DIR / "posted_auction_ids.txt"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 GRAPH_API_VERSION = os.environ.get("GRAPH_API_VERSION", "v21.0")
 MAX_CAPTION_LENGTH = 2200
-MAX_HASHTAGS = 30
 MAX_CAROUSEL_IMAGES = 10
 URL_PATTERN = re.compile(r"https?://\S+")
 BROWSER_USER_AGENT = (
@@ -73,6 +72,28 @@ def notify_line(message: str) -> None:
         )
     except Exception:
         pass
+
+FIXED_HASHTAGS = """\
+#新潟で木の伐採　お見積り致します
+#林業　放置された里山を再生
+#材木屋　広葉樹木材を大量在庫・一枚から販売
+#新潟のギャラリー　林業×材木屋×木工房
+#木工　家具食器雑貨を作ってます
+#木のある暮らし　日常に木製品を
+#山暮らし　木に囲まれる生活
+#木の生活道具　木を伐るところから製作
+#木製カトラリー　木のあたたかみを感じてほしい
+#ギャラリー　新潟では少ない木工家のお店
+#木が好きな人と繋がりたい
+#木工が好きな人と繋がりたい
+#暮らしの道具
+#木の雑貨
+#DIY
+#woodworking
+#woodcrafts
+#handmade
+#handcrafted
+#gallery"""
 
 BRAND_CONTEXT = """\
 アカウント: @junshin_industry (森からつくる木の生活道具 Junshin -潤森-)
@@ -383,19 +404,15 @@ def generate_caption(image_path: Path, metadata: str | None = None) -> str:
 - 本文3〜5行程度、適度に改行を入れてテンポよく読めるようにする
 - 絵文字は1〜3個程度、要所で使って視線の誘導・強弱をつける
 - 最後の一文は上記トーンに沿って、その日ごとに変化をつける
-- 本文の後に空行を2行入れてから、ハッシュタグを書く
 
-【ハッシュタグ】
-- 15〜25個、ブランド固有・地域・木工/林業/薪ストーブ関連・DIY関連をバランスよく
-- ブランド名のハッシュタグは必ず「#junshin_industry」と、アンダースコア付きの\
-  正しいアカウント名で書くこと(「#junshinindustry」のようにアンダースコアを\
-  省略しないこと)
-- 読みやすいように、1行あたり4〜5個ずつ改行して複数行に分けること
-  (1行にすべて詰め込まない)
+【ハッシュタグについて】
+- ハッシュタグは書かないこと。投稿する全てのハッシュタグは固定文言として\
+  別途システム側で自動的に追加されるため、あなたはキャプション本文だけを書けばよい
 
 【その他】
-- キャプション全体で2000文字を超えないこと
-- 出力はキャプション本文とハッシュタグのみ。説明や前置きは一切書かないこと
+- キャプション全体で1500文字を超えないこと(ハッシュタグは別途追加されるため、\
+  本文だけでこの文字数に収めること)
+- 出力はキャプション本文のみ。説明や前置き、ハッシュタグは一切書かないこと
 """
 
     response = client.messages.create(
@@ -419,18 +436,11 @@ def generate_caption(image_path: Path, metadata: str | None = None) -> str:
         ],
     )
     text_block = next(block for block in response.content if block.type == "text")
-    caption = text_block.text.strip()
-    caption = caption.replace("#junshinindustry", "#junshin_industry")
-    return enforce_limits(caption)
+    body = text_block.text.strip()
+    return enforce_limits(f"{body}\n\n{FIXED_HASHTAGS}")
 
 
 def enforce_limits(caption: str) -> str:
-    words = caption.split()
-    hashtags = [w for w in words if w.startswith("#")]
-    if len(hashtags) > MAX_HASHTAGS:
-        extra = hashtags[MAX_HASHTAGS:]
-        for tag in extra:
-            caption = caption.replace(tag, "").strip()
     if len(caption) > MAX_CAPTION_LENGTH:
         caption = caption[:MAX_CAPTION_LENGTH].rstrip()
     return caption

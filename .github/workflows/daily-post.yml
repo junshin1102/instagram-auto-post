@@ -2,6 +2,10 @@ name: Daily Instagram Post
 
 on:
   schedule:
+    # 毎日 7:00 JST (UTC+9) = 22:00 UTC(前日) に実行
+    - cron: "0 22 * * *"
+    # 毎日 12:00 JST (UTC+9) = 3:00 UTC に実行
+    - cron: "0 3 * * *"
     # 毎日 20:00 JST (UTC+9) = 11:00 UTC に実行
     - cron: "0 11 * * *"
   workflow_dispatch: {}
