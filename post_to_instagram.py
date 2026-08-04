@@ -24,7 +24,7 @@ from pathlib import Path
 import requests
 from anthropic import Anthropic
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
 
@@ -54,9 +54,12 @@ SELLER_URL = os.environ.get(
     "https://auctions.yahoo.co.jp/seller/7F3TQFS83hRevxWX9wK4z2ZvPzj3t?user_type=c",
 )
 LOGO_PATH = ROOT_DIR / "assets" / "logo_watermark.png"
+FONT_PATH = ROOT_DIR / "assets" / "fonts" / "NotoSansJP.ttf"
 WATERMARK_MAX_IMAGES = 9
 WATERMARK_WIDTH_RATIO = 0.22
 WATERMARK_MARGIN_RATIO = 0.03
+LABEL_FONT_SIZE_RATIO = 0.035
+LABEL_MARGIN_RATIO = 0.03
 
 
 def add_watermark(image_path: Path) -> None:
@@ -77,6 +80,56 @@ def add_watermark(image_path: Path) -> None:
             base.paste(logo, position, mask=logo)
 
         base.convert("RGB").save(image_path, quality=95)
+
+
+def add_label(image_path: Path, text: str) -> None:
+    """画像の左上に、樹種名・商品番号などのラベルを、視認性のための
+    半透明の白背景付きで描画する。"""
+    with Image.open(image_path) as base:
+        base = base.convert("RGBA")
+        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        font_size = max(24, int(base.width * LABEL_FONT_SIZE_RATIO))
+        font = ImageFont.truetype(str(FONT_PATH), font_size)
+
+        margin = int(base.width * LABEL_MARGIN_RATIO)
+        padding = int(font_size * 0.4)
+        text_bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+
+        box = (
+            margin,
+            margin,
+            margin + text_width + padding * 2,
+            margin + text_height + padding * 2,
+        )
+        draw.rectangle(box, fill=(255, 255, 255, 200))
+        draw.text(
+            (margin + padding - text_bbox[0], margin + padding - text_bbox[1]),
+            text,
+            font=font,
+            fill=(30, 30, 30, 255),
+        )
+
+        combined = Image.alpha_composite(base, overlay)
+        combined.convert("RGB").save(image_path, quality=95)
+
+
+def extract_item_code(title: str) -> str | None:
+    match = re.match(r"^([A-Za-z]{1,5}-\d+)", title.strip())
+    return match.group(1) if match else None
+
+
+def extract_species_name(title: str) -> str | None:
+    """商品タイトルから、商品番号の直後・寸法の手前にある樹種名を1つ取り出す。"""
+    segments = [seg for seg in title.split("　") if seg]
+    for seg in segments[1:]:
+        if re.search(r"\d+mm[×xX]", seg):
+            break
+        return seg
+    return None
 
 
 def notify_line(message: str) -> None:
@@ -245,9 +298,9 @@ def format_auction_facts(item: dict) -> str:
     title = item["title"]
     lines = [f"商品タイトル: {title}"]
 
-    code_match = re.match(r"^([A-Za-z]{1,5}-\d+)", title.strip())
-    if code_match:
-        lines.append(f"商品番号: {code_match.group(1)}")
+    code = extract_item_code(title)
+    if code:
+        lines.append(f"商品番号: {code}")
 
     dimensions_match = re.search(r"\d+mm[×xX][^\s　【]+mm[×xX][^\s　【]+mm", title)
     if dimensions_match:
@@ -329,6 +382,11 @@ def download_auction_images(item: dict, stem: str) -> list[Path]:
     """ヤフオク出品ページの画像を、最大 MAX_CAROUSEL_IMAGES 枚まで
     images/queue/{stem}-1.jpg, {stem}-2.jpg, ... としてダウンロードする。"""
     images = (item.get("img") or [])[:MAX_CAROUSEL_IMAGES]
+
+    species = extract_species_name(item["title"])
+    code = extract_item_code(item["title"])
+    label_text = "  ".join(part for part in (species, code) if part)
+
     downloaded = []
     for index, image in enumerate(images, start=1):
         image_url = image["image"]
@@ -342,6 +400,8 @@ def download_auction_images(item: dict, stem: str) -> list[Path]:
         dest.write_bytes(resp.content)
         if index <= WATERMARK_MAX_IMAGES:
             add_watermark(dest)
+        if index == 1 and label_text:
+            add_label(dest, label_text)
         downloaded.append(dest)
     return downloaded
 
