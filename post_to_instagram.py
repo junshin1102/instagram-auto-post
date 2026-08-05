@@ -16,7 +16,9 @@ import mimetypes
 import os
 import random
 import re
+import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +41,9 @@ QUEUE_DIR = ROOT_DIR / "images" / "queue"
 POSTED_DIR = ROOT_DIR / "images" / "posted"
 LOG_PATH = POSTED_DIR / "posted_log.csv"
 POSTED_AUCTION_IDS_PATH = POSTED_DIR / "posted_auction_ids.txt"
+VIDEO_QUEUE_DIR = ROOT_DIR / "videos" / "queue"
+VIDEO_POSTED_DIR = ROOT_DIR / "videos" / "posted"
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 GRAPH_API_VERSION = os.environ.get("GRAPH_API_VERSION", "v21.0")
@@ -146,6 +151,121 @@ def extract_species_name(title: str) -> str | None:
 def extract_dimensions(title: str) -> str | None:
     match = re.search(r"\d+mm[×xX][^\s　【]+mm[×xX][^\s　【]+mm", title)
     return match.group(0) if match else None
+
+
+def find_next_video() -> Path | None:
+    """videos/queue/ の中から、次に投稿する動画(Reels)を返す。"""
+    candidates = sorted(
+        p for p in VIDEO_QUEUE_DIR.iterdir()
+        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+    )
+    return candidates[0] if candidates else None
+
+
+def probe_video_dimensions(video_path: Path) -> tuple[int, int]:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "json", str(video_path),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    info = json.loads(result.stdout)["streams"][0]
+    return info["width"], info["height"]
+
+
+def process_video(video_path: Path, label_lines: list[str]) -> Path:
+    """動画の右下にロゴを、(あれば)左上に樹種・寸法ラベルを合成する。"""
+    width, _height = probe_video_dimensions(video_path)
+
+    font_size = max(24, int(width * LABEL_FONT_SIZE_RATIO))
+    margin = int(width * LABEL_MARGIN_RATIO)
+    line_gap = int(font_size * 0.3)
+    logo_width = int(width * WATERMARK_WIDTH_RATIO)
+    logo_margin = int(width * WATERMARK_MARGIN_RATIO)
+
+    font_rel = os.path.relpath(FONT_PATH, ROOT_DIR).replace("\\", "/")
+    output_path = video_path.with_name(f"{video_path.stem}_labeled.mp4")
+
+    with tempfile.TemporaryDirectory(dir=ROOT_DIR) as tmpdir:
+        tmp_rel = os.path.relpath(tmpdir, ROOT_DIR).replace("\\", "/")
+
+        filters = []
+        current = "0:v"
+        for i, line in enumerate(label_lines):
+            line_file = Path(tmpdir) / f"line{i}.txt"
+            line_file.write_text(line, encoding="utf-8")
+            y = margin + i * (font_size + line_gap)
+            next_label = f"v{i}"
+            filters.append(
+                f"[{current}]drawtext=fontfile='{font_rel}':"
+                f"textfile='{tmp_rel}/line{i}.txt':"
+                f"fontcolor=black:fontsize={font_size}:box=1:boxcolor=white@0.85:"
+                f"boxborderw={int(font_size * 0.3)}:x={margin}:y={y}[{next_label}]"
+            )
+            current = next_label
+
+        filters.append(f"[1:v]scale={logo_width}:-1[logo]")
+        filters.append(f"[{current}][logo]overlay=W-w-{logo_margin}:H-h-{logo_margin}[vout]")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-i", str(LOGO_PATH),
+            "-filter_complex", ";".join(filters),
+            "-map", "[vout]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+        subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
+
+    return output_path
+
+
+def extract_video_thumbnail(video_path: Path) -> Path:
+    """Claudeでのキャプション生成用に、動画から1枚静止画を切り出す。"""
+    thumbnail_path = video_path.with_suffix(".jpg")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-ss", "00:00:00.5", "-frames:v", "1", str(thumbnail_path),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return thumbnail_path
+
+
+def upload_video_to_cloudinary(video_path: Path) -> str:
+    """動画をCloudinaryにアップロードし、Instagram Graph APIから取得可能な
+    公開URL(secure_url)を返す。"""
+    cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"]
+    api_key = os.environ["CLOUDINARY_API_KEY"]
+    api_secret = os.environ["CLOUDINARY_API_SECRET"]
+
+    timestamp = str(int(time.time()))
+    signature = hashlib.sha1(
+        f"timestamp={timestamp}{api_secret}".encode("utf-8")
+    ).hexdigest()
+
+    url = f"https://api.cloudinary.com/v1_1/{cloud_name}/video/upload"
+    with video_path.open("rb") as f:
+        resp = requests.post(
+            url,
+            data={
+                "api_key": api_key,
+                "timestamp": timestamp,
+                "signature": signature,
+            },
+            files={"file": (video_path.name, f, "video/mp4")},
+            timeout=300,
+        )
+    payload = resp.json()
+    if "secure_url" not in payload:
+        raise RuntimeError(f"Cloudinaryへの動画アップロードに失敗: {payload}")
+    return payload["secure_url"]
 
 
 def notify_line(message: str) -> None:
@@ -632,6 +752,25 @@ def create_carousel_container(children_ids: list[str], caption: str) -> str:
     return payload["id"]
 
 
+def create_reels_container(video_url: str, caption: str) -> str:
+    ig_user_id = os.environ["IG_USER_ID"]
+    url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/{ig_user_id}/media"
+    resp = requests.post(
+        url,
+        data={
+            "media_type": "REELS",
+            "video_url": video_url,
+            "caption": caption,
+            "access_token": os.environ["IG_ACCESS_TOKEN"],
+        },
+        timeout=30,
+    )
+    payload = resp.json()
+    if "error" in payload:
+        raise RuntimeError(f"Reelsメディア作成に失敗: {payload['error']}")
+    return payload["id"]
+
+
 def wait_until_ready(creation_id: str, attempts: int = 10, interval_sec: int = 3) -> None:
     url = f"https://graph.instagram.com/{GRAPH_API_VERSION}/{creation_id}"
     for _ in range(attempts):
@@ -699,7 +838,71 @@ def log_post(image_name: str, media_id: str, caption: str, metadata: str | None 
         ])
 
 
+def handle_video_post(video_path: Path) -> None:
+    """videos/queue/ にある動画をReelsとして投稿する。"""
+    print(f"投稿対象(動画): {video_path.name}")
+    raw_metadata = find_metadata([video_path])
+    caption_facts = resolve_caption_facts(raw_metadata)
+    if caption_facts:
+        print(f"事実情報を読み込みました:\n{caption_facts}")
+
+    label_lines = []
+    if raw_metadata:
+        urls = URL_PATTERN.findall(raw_metadata)
+        if urls:
+            item = fetch_yahoo_auction_item(urls[0])
+            if item:
+                species = extract_species_name(item["title"])
+                code = extract_item_code(item["title"])
+                dimensions = extract_dimensions(item["title"])
+                label_lines = [
+                    line for line in (
+                        "  ".join(part for part in (species, code) if part),
+                        dimensions,
+                    ) if line
+                ]
+
+    processed_path = process_video(video_path, label_lines)
+    thumbnail_path = extract_video_thumbnail(processed_path)
+
+    video_url = upload_video_to_cloudinary(processed_path)
+    print(f"Cloudinaryへ動画アップロード完了: {video_url}")
+
+    caption = generate_caption(thumbnail_path, caption_facts)
+    print("キャプションを生成しました:")
+    print(caption)
+
+    creation_id = create_reels_container(video_url, caption)
+    wait_until_ready(creation_id, attempts=60, interval_sec=5)
+    media_id = publish_media(creation_id)
+    print(f"投稿完了: media_id={media_id}")
+
+    VIDEO_POSTED_DIR.mkdir(parents=True, exist_ok=True)
+    destination = VIDEO_POSTED_DIR / video_path.name
+    video_path.rename(destination)
+    processed_path.unlink(missing_ok=True)
+    thumbnail_path.unlink(missing_ok=True)
+
+    metadata_path = video_path.with_suffix(".txt")
+    if metadata_path.exists():
+        metadata_path.rename(VIDEO_POSTED_DIR / metadata_path.name)
+
+    log_post(destination.name, media_id, caption, raw_metadata)
+    print(f"動画を {destination} に移動し、ログを記録しました。")
+
+    first_line = caption.strip().splitlines()[0]
+    notify_line(
+        f"✅ Instagramに投稿しました(Reels)\n\n{first_line}\n\n"
+        f"https://www.instagram.com/junshin_industry/"
+    )
+
+
 def main() -> None:
+    video_path = find_next_video()
+    if video_path:
+        handle_video_post(video_path)
+        return
+
     image_paths = find_next_entry()
     auction_id = None
 
