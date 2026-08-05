@@ -60,6 +60,7 @@ SELLER_URL = os.environ.get(
 )
 LOGO_PATH = ROOT_DIR / "assets" / "logo_watermark.png"
 FONT_PATH = ROOT_DIR / "assets" / "fonts" / "NotoSansJP.ttf"
+BOLD_FONT_PATH = ROOT_DIR / "assets" / "fonts" / "NotoSansJP-Bold.ttf"
 WATERMARK_MAX_IMAGES = 9
 WATERMARK_WIDTH_RATIO = 0.22
 WATERMARK_MARGIN_RATIO = 0.03
@@ -185,7 +186,7 @@ def process_video(video_path: Path, label_lines: list[str]) -> Path:
     logo_width = int(width * WATERMARK_WIDTH_RATIO)
     logo_margin = int(width * WATERMARK_MARGIN_RATIO)
 
-    font_rel = os.path.relpath(FONT_PATH, ROOT_DIR).replace("\\", "/")
+    font_rel = os.path.relpath(BOLD_FONT_PATH, ROOT_DIR).replace("\\", "/")
     output_path = video_path.with_name(f"{video_path.stem}_labeled.mp4")
 
     with tempfile.TemporaryDirectory(dir=ROOT_DIR) as tmpdir:
@@ -294,7 +295,7 @@ def build_slideshow_video(
             "fps=30",
         ]
 
-        font_rel = os.path.relpath(FONT_PATH, ROOT_DIR).replace("\\", "/")
+        font_rel = os.path.relpath(BOLD_FONT_PATH, ROOT_DIR).replace("\\", "/")
 
         if top_text:
             top_file = Path(tmpdir) / "top.txt"
@@ -302,7 +303,7 @@ def build_slideshow_video(
             top_rel = os.path.relpath(top_file, ROOT_DIR).replace("\\", "/")
             vf_parts.append(
                 f"drawtext=fontfile='{font_rel}':textfile='{top_rel}':"
-                f"fontcolor=black:fontsize=48:x=(w-text_w)/2:y=70"
+                f"fontcolor=black:fontsize=52:x=(w-text_w)/2:y=320"
             )
 
         if bottom_text:
@@ -311,7 +312,7 @@ def build_slideshow_video(
             bottom_rel = os.path.relpath(bottom_file, ROOT_DIR).replace("\\", "/")
             vf_parts.append(
                 f"drawtext=fontfile='{font_rel}':textfile='{bottom_rel}':"
-                f"fontcolor=black:fontsize=42:x=(w-text_w)/2:y=h-th-70"
+                f"fontcolor=black:fontsize=46:x=(w-text_w)/2:y=h-th-320"
             )
 
         cmd = [
@@ -610,15 +611,6 @@ def download_auction_images(item: dict, stem: str) -> list[Path]:
     images/queue/{stem}-1.jpg, {stem}-2.jpg, ... としてダウンロードする。"""
     images = (item.get("img") or [])[:MAX_CAROUSEL_IMAGES]
 
-    species = extract_species_name(item["title"])
-    code = extract_item_code(item["title"])
-    dimensions = extract_dimensions(item["title"])
-    label_lines = [
-        "  ".join(part for part in (species, code) if part),
-        dimensions or "",
-    ]
-    label_text = "\n".join(line for line in label_lines if line)
-
     downloaded = []
     for index, image in enumerate(images, start=1):
         image_url = image["image"]
@@ -632,8 +624,6 @@ def download_auction_images(item: dict, stem: str) -> list[Path]:
         dest.write_bytes(resp.content)
         if index <= WATERMARK_MAX_IMAGES:
             add_watermark(dest)
-        if index == 1 and label_text:
-            add_label(dest, label_text)
         downloaded.append(dest)
     return downloaded
 
@@ -1023,7 +1013,7 @@ def main() -> None:
 
     if is_auction_batch:
         label_lines = derive_label_lines(raw_metadata)
-        top_text = label_lines[0] if label_lines else None
+        top_text = "\n".join(label_lines) if label_lines else None
         bottom_text = random.choice(BOTTOM_CTA_PHRASES)
 
         slideshow_path = image_paths[0].with_name(

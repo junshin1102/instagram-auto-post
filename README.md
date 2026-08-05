@@ -12,21 +12,20 @@
 4. どちらも空の場合、[ヤフオクの出品者ページ](https://auctions.yahoo.co.jp/seller/7F3TQFS83hRevxWX9wK4z2ZvPzj3t?user_type=c)(現在459件)から、\
    **まだ投稿していない商品をランダムに1つ選ぶ**
 5. その商品の画像(最大10枚)と、タイトル・寸法・価格などの情報を出品ページから自動取得する
-6. 取得した画像のうち **1〜9枚目の右下にロゴ([assets/logo_watermark.png](assets/logo_watermark.png))を合成する**(10枚目にはロゴを入れない)
-7. **1枚目の画像の左上に、樹種名・商品番号・寸法(例:「ヤマザクラ SKR-505」+「1600mm×約229mm×32mm」)を自動で描画する**
-8. 画像を Cloudinary にアップロードして公開URLを取得
-9. Claude(画像認識)が、取得した正確な情報をもとにキャプション本文を自動生成\
+6. 取得した画像のうち **1〜9枚目の右下にロゴ([assets/logo_watermark.png](assets/logo_watermark.png))を合成する**(10枚目にはロゴを入れない、写真自体には樹種名等は描画しない)
+7. 画像を Cloudinary にアップロードして公開URLを取得
+8. Claude(画像認識)が、取得した正確な情報をもとにキャプション本文を自動生成\
    (商品番号・正確な寸法は必ず本文に記載し、樹種の一般的な特徴も1〜2文加える)
-10. 本文の後に、固定のハッシュタグ(後述)を自動で付与する
-11. **ヤフオクから自動取得した画像(2枚以上)は、カルーセルではなく、10枚を1本につなげた無音のスライドショー動画(Reels)として投稿する**\
+9. 本文の後に、固定のハッシュタグ(後述)を自動で付与する
+10. **ヤフオクから自動取得した画像(2枚以上)は、カルーセルではなく、10枚を1本につなげた無音のスライドショー動画(Reels)として投稿する**\
     (`images/queue/` に手動で置いた画像の場合は、これまで通りカルーセル投稿)
-    - 動画の**上の白い余白**に樹種名・商品番号(例:「オニグルミ KRM-98」)
+    - 動画の**上の白い余白**に樹種名・商品番号・寸法(例:「ヤマザクラ SKR-512」+「1000mm×230mm×32mm」)
     - 動画の**下の白い余白**に購入を促す一言(数パターンからランダムに選択)
-12. Instagram Graph API で投稿
-13. 投稿済みの商品IDは `images/posted/posted_auction_ids.txt` に記録され、次回以降は選ばれない
-14. 手動追加した画像を使った場合は、`images/posted/` に移動し `posted_log.csv` に記録
+11. Instagram Graph API で投稿
+12. 投稿済みの商品IDは `images/posted/posted_auction_ids.txt` に記録され、次回以降は選ばれない
+13. 手動追加した画像を使った場合は、`images/posted/` に移動し `posted_log.csv` に記録
 
-左上のラベルの日本語描画には [assets/fonts/NotoSansJP.ttf](assets/fonts/NotoSansJP.ttf)(Google Fonts公式・SIL Open Font License)を使用しています。
+動画の余白テキストの日本語描画には [assets/fonts/NotoSansJP-Bold.ttf](assets/fonts/NotoSansJP-Bold.ttf)(Google Fonts公式 Noto Sans JPの太字インスタンス・SIL Open Font License)を使用しています。
 
 ### Reels(動画投稿)
 
