@@ -18,15 +18,20 @@
 9. Claude(画像認識)が、取得した正確な情報をもとにキャプション本文を自動生成\
    (商品番号・正確な寸法は必ず本文に記載し、樹種の一般的な特徴も1〜2文加える)
 10. 本文の後に、固定のハッシュタグ(後述)を自動で付与する
-11. Instagram Graph API で投稿(画像が2枚以上ある場合は複数枚投稿=カルーセル)
-12. 投稿済みの商品IDは `images/posted/posted_auction_ids.txt` に記録され、次回以降は選ばれない
-13. 手動追加した画像を使った場合は、`images/posted/` に移動し `posted_log.csv` に記録
+11. **ヤフオクから自動取得した画像(2枚以上)は、カルーセルではなく、10枚を1本につなげた無音のスライドショー動画(Reels)として投稿する**\
+    (`images/queue/` に手動で置いた画像の場合は、これまで通りカルーセル投稿)
+12. Instagram Graph API で投稿
+13. 投稿済みの商品IDは `images/posted/posted_auction_ids.txt` に記録され、次回以降は選ばれない
+14. 手動追加した画像を使った場合は、`images/posted/` に移動し `posted_log.csv` に記録
 
 左上のラベルの日本語描画には [assets/fonts/NotoSansJP.ttf](assets/fonts/NotoSansJP.ttf)(Google Fonts公式・SIL Open Font License)を使用しています。
 
 ### Reels(動画投稿)
 
-ヤフオクの出品ページには動画がないため、Reelsだけは自動取得できません。**`videos/queue/` フォルダに、ご自身で撮影した動画(`.mp4` / `.mov` / `.m4v`)を置いてください。**
+Reelsには2種類あります。
+
+1. **ヤフオクの商品画像から自動生成するスライドショー** — 上記の仕組みの通り、自動選択された商品の画像10枚を1本につなげた動画が自動で作られ、Reelsとして投稿されます。何もしなくてOKです。
+2. **ご自身で撮影した動画** — `videos/queue/` フォルダに、動画(`.mp4` / `.mov` / `.m4v`)を置いてください。
 
 ```
 videos/queue/01.mp4

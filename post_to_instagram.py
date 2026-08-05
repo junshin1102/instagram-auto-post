@@ -238,6 +238,38 @@ def extract_video_thumbnail(video_path: Path) -> Path:
     return thumbnail_path
 
 
+def build_slideshow_video(
+    image_paths: list[Path], output_path: Path, seconds_per_image: float = 1.8
+) -> Path:
+    """複数枚の画像(ロゴ・ラベル合成済み)から、無音のスライドショー動画を作る。"""
+    with tempfile.TemporaryDirectory(dir=ROOT_DIR) as tmpdir:
+        list_path = Path(tmpdir) / "concat_list.txt"
+        lines = []
+        for p in image_paths:
+            lines.append(f"file '{p.resolve().as_posix()}'")
+            lines.append(f"duration {seconds_per_image}")
+        # concatデムクサーの仕様上、最後のファイルのdurationは無視されるため、
+        # 最後の画像をもう一度(duration指定なしで)追記する
+        lines.append(f"file '{image_paths[-1].resolve().as_posix()}'")
+        list_path.write_text("\n".join(lines), encoding="utf-8")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_path),
+            "-vf",
+            "scale=1080:1920:force_original_aspect_ratio=decrease,"
+            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=white,fps=30",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+        subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
+
+    return output_path
+
+
 def upload_video_to_cloudinary(video_path: Path) -> str:
     """動画をCloudinaryにアップロードし、Instagram Graph APIから取得可能な
     公開URL(secure_url)を返す。"""
@@ -934,24 +966,46 @@ def main() -> None:
     if caption_facts:
         print(f"事実情報を読み込みました:\n{caption_facts}")
 
-    image_urls = [upload_to_cloudinary(p) for p in image_paths]
-    print(f"Cloudinaryへアップロード完了: {len(image_urls)}枚")
-
     caption = generate_caption(image_paths[0], caption_facts)
     print("キャプションを生成しました:")
     print(caption)
 
-    if len(image_urls) == 1:
-        creation_id = create_media_container(image_urls[0], caption)
-        wait_until_ready(creation_id)
+    # ヤフオクから自動ダウンロードした複数枚画像(auto-xxx-1.jpg等)は、
+    # カルーセルではなくスライドショーのReelsとして投稿する
+    is_auction_batch = len(image_paths) > 1 and bool(
+        NUMBERED_SUFFIX_PATTERN.match(image_paths[0].stem)
+    )
+
+    if is_auction_batch:
+        slideshow_path = image_paths[0].with_name(
+            f"{entry_stem(image_paths[0])}_slideshow.mp4"
+        )
+        build_slideshow_video(image_paths, slideshow_path)
+        print(f"スライドショー動画を作成しました: {slideshow_path.name}")
+
+        video_url = upload_video_to_cloudinary(slideshow_path)
+        print(f"Cloudinaryへ動画アップロード完了: {video_url}")
+
+        creation_id = create_reels_container(video_url, caption)
+        wait_until_ready(creation_id, attempts=60, interval_sec=5)
+        slideshow_path.unlink(missing_ok=True)
+        media_count_label = f"スライドショー({len(image_paths)}枚)"
     else:
-        children_ids = []
-        for image_url in image_urls:
-            child_id = create_carousel_item_container(image_url)
-            wait_until_ready(child_id)
-            children_ids.append(child_id)
-        creation_id = create_carousel_container(children_ids, caption)
-        wait_until_ready(creation_id)
+        image_urls = [upload_to_cloudinary(p) for p in image_paths]
+        print(f"Cloudinaryへアップロード完了: {len(image_urls)}枚")
+
+        if len(image_urls) == 1:
+            creation_id = create_media_container(image_urls[0], caption)
+            wait_until_ready(creation_id)
+        else:
+            children_ids = []
+            for image_url in image_urls:
+                child_id = create_carousel_item_container(image_url)
+                wait_until_ready(child_id)
+                children_ids.append(child_id)
+            creation_id = create_carousel_container(children_ids, caption)
+            wait_until_ready(creation_id)
+        media_count_label = f"{len(image_urls)}枚"
 
     media_id = publish_media(creation_id)
     print(f"投稿完了: media_id={media_id}")
@@ -967,7 +1021,7 @@ def main() -> None:
 
     first_line = caption.strip().splitlines()[0]
     notify_line(
-        f"✅ Instagramに投稿しました\n\n{first_line}\n\n画像: {len(posted_paths)}枚\n"
+        f"✅ Instagramに投稿しました\n\n{first_line}\n\n{media_count_label}\n"
         f"https://www.instagram.com/junshin_industry/"
     )
 
