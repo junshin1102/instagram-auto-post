@@ -238,10 +238,45 @@ def extract_video_thumbnail(video_path: Path) -> Path:
     return thumbnail_path
 
 
+BOTTOM_CTA_PHRASES = [
+    "気になる方はプロフィールのリンクからどうぞ",
+    "ヤフオクで購入できます(プロフィールのリンクへ)",
+    "DIYにも業者様の仕入れにも対応しています",
+    "1点から購入OK、お気軽にどうぞ",
+    "詳しくはプロフィールのリンクをチェック",
+]
+
+
+def derive_label_lines(raw_metadata: str | None) -> list[str]:
+    """メモに含まれるヤフオクのURLから、樹種名・商品番号・寸法のラベル行を作る。"""
+    if not raw_metadata:
+        return []
+    urls = URL_PATTERN.findall(raw_metadata)
+    if not urls:
+        return []
+    item = fetch_yahoo_auction_item(urls[0])
+    if not item:
+        return []
+    species = extract_species_name(item["title"])
+    code = extract_item_code(item["title"])
+    dimensions = extract_dimensions(item["title"])
+    return [
+        line for line in (
+            "  ".join(part for part in (species, code) if part),
+            dimensions,
+        ) if line
+    ]
+
+
 def build_slideshow_video(
-    image_paths: list[Path], output_path: Path, seconds_per_image: float = 1.8
+    image_paths: list[Path],
+    output_path: Path,
+    top_text: str | None = None,
+    bottom_text: str | None = None,
+    seconds_per_image: float = 1.8,
 ) -> Path:
-    """複数枚の画像(ロゴ・ラベル合成済み)から、無音のスライドショー動画を作る。"""
+    """複数枚の画像(ロゴ・ラベル合成済み)から、無音のスライドショー動画を作る。
+    上下の白い余白部分に、樹種・商品番号(上)と購入を促す一言(下)を重ねる。"""
     with tempfile.TemporaryDirectory(dir=ROOT_DIR) as tmpdir:
         list_path = Path(tmpdir) / "concat_list.txt"
         lines = []
@@ -253,13 +288,37 @@ def build_slideshow_video(
         lines.append(f"file '{image_paths[-1].resolve().as_posix()}'")
         list_path.write_text("\n".join(lines), encoding="utf-8")
 
+        vf_parts = [
+            "scale=1080:1920:force_original_aspect_ratio=decrease",
+            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=white",
+            "fps=30",
+        ]
+
+        font_rel = os.path.relpath(FONT_PATH, ROOT_DIR).replace("\\", "/")
+
+        if top_text:
+            top_file = Path(tmpdir) / "top.txt"
+            top_file.write_text(top_text, encoding="utf-8")
+            top_rel = os.path.relpath(top_file, ROOT_DIR).replace("\\", "/")
+            vf_parts.append(
+                f"drawtext=fontfile='{font_rel}':textfile='{top_rel}':"
+                f"fontcolor=black:fontsize=48:x=(w-text_w)/2:y=70"
+            )
+
+        if bottom_text:
+            bottom_file = Path(tmpdir) / "bottom.txt"
+            bottom_file.write_text(bottom_text, encoding="utf-8")
+            bottom_rel = os.path.relpath(bottom_file, ROOT_DIR).replace("\\", "/")
+            vf_parts.append(
+                f"drawtext=fontfile='{font_rel}':textfile='{bottom_rel}':"
+                f"fontcolor=black:fontsize=42:x=(w-text_w)/2:y=h-th-70"
+            )
+
         cmd = [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(list_path),
-            "-vf",
-            "scale=1080:1920:force_original_aspect_ratio=decrease,"
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=white,fps=30",
+            "-vf", ",".join(vf_parts),
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-movflags", "+faststart",
@@ -878,21 +937,7 @@ def handle_video_post(video_path: Path) -> None:
     if caption_facts:
         print(f"事実情報を読み込みました:\n{caption_facts}")
 
-    label_lines = []
-    if raw_metadata:
-        urls = URL_PATTERN.findall(raw_metadata)
-        if urls:
-            item = fetch_yahoo_auction_item(urls[0])
-            if item:
-                species = extract_species_name(item["title"])
-                code = extract_item_code(item["title"])
-                dimensions = extract_dimensions(item["title"])
-                label_lines = [
-                    line for line in (
-                        "  ".join(part for part in (species, code) if part),
-                        dimensions,
-                    ) if line
-                ]
+    label_lines = derive_label_lines(raw_metadata)
 
     processed_path = process_video(video_path, label_lines)
     thumbnail_path = extract_video_thumbnail(processed_path)
@@ -977,10 +1022,14 @@ def main() -> None:
     )
 
     if is_auction_batch:
+        label_lines = derive_label_lines(raw_metadata)
+        top_text = label_lines[0] if label_lines else None
+        bottom_text = random.choice(BOTTOM_CTA_PHRASES)
+
         slideshow_path = image_paths[0].with_name(
             f"{entry_stem(image_paths[0])}_slideshow.mp4"
         )
-        build_slideshow_video(image_paths, slideshow_path)
+        build_slideshow_video(image_paths, slideshow_path, top_text, bottom_text)
         print(f"スライドショー動画を作成しました: {slideshow_path.name}")
 
         video_url = upload_video_to_cloudinary(slideshow_path)
