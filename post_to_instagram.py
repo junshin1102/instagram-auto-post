@@ -269,6 +269,24 @@ def derive_label_lines(raw_metadata: str | None) -> list[str]:
     ]
 
 
+SLIDESHOW_WIDTH = 1080
+SLIDESHOW_HEIGHT = 1920
+
+
+def compute_min_padding(image_paths: list[Path]) -> int:
+    """スライドショーの各画像を1080x1920に収めたときにできる、
+    上下の白い余白のうち、一番狭いものの高さを返す(pxの整数)。"""
+    min_pad = SLIDESHOW_HEIGHT / 2
+    for p in image_paths:
+        with Image.open(p) as img:
+            w, h = img.size
+        scale = min(SLIDESHOW_WIDTH / w, SLIDESHOW_HEIGHT / h)
+        scaled_h = h * scale
+        pad = (SLIDESHOW_HEIGHT - scaled_h) / 2
+        min_pad = min(min_pad, pad)
+    return int(min_pad)
+
+
 def build_slideshow_video(
     image_paths: list[Path],
     output_path: Path,
@@ -277,7 +295,11 @@ def build_slideshow_video(
     seconds_per_image: float = 1.8,
 ) -> Path:
     """複数枚の画像(ロゴ・ラベル合成済み)から、無音のスライドショー動画を作る。
-    上下の白い余白部分に、樹種・商品番号(上)と購入を促す一言(下)を重ねる。"""
+    上下の白い余白部分に、樹種・商品番号・寸法(上)と購入を促す一言(下)を重ねる。
+    どの画像でも余白からはみ出さないよう、実際の最小の余白幅から文字の大きさと
+    位置を計算する。"""
+    min_pad = compute_min_padding(image_paths)
+
     with tempfile.TemporaryDirectory(dir=ROOT_DIR) as tmpdir:
         list_path = Path(tmpdir) / "concat_list.txt"
         lines = []
@@ -290,29 +312,40 @@ def build_slideshow_video(
         list_path.write_text("\n".join(lines), encoding="utf-8")
 
         vf_parts = [
-            "scale=1080:1920:force_original_aspect_ratio=decrease",
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=white",
+            f"scale={SLIDESHOW_WIDTH}:{SLIDESHOW_HEIGHT}:force_original_aspect_ratio=decrease",
+            f"pad={SLIDESHOW_WIDTH}:{SLIDESHOW_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=white",
             "fps=30",
         ]
 
         font_rel = os.path.relpath(BOLD_FONT_PATH, ROOT_DIR).replace("\\", "/")
+        buffer = 20
 
         if top_text:
+            line_count = top_text.count("\n") + 1
+            # 余白の高さに収まるよう、行数に応じてフォントサイズを決める
+            font_size = max(24, min(48, int((min_pad - buffer * 2) / line_count / 1.35)))
+            block_height = int(line_count * font_size * 1.35)
+            y_top = max(20, min_pad - buffer - block_height)
+
             top_file = Path(tmpdir) / "top.txt"
             top_file.write_text(top_text, encoding="utf-8")
             top_rel = os.path.relpath(top_file, ROOT_DIR).replace("\\", "/")
             vf_parts.append(
                 f"drawtext=fontfile='{font_rel}':textfile='{top_rel}':"
-                f"fontcolor=black:fontsize=52:x=(w-text_w)/2:y=320"
+                f"fontcolor=black:fontsize={font_size}:line_spacing=8:"
+                f"x=(w-text_w)/2:y={y_top}"
             )
 
         if bottom_text:
+            font_size = max(24, min(46, int((min_pad - buffer * 2) / 1.35)))
+            y_bottom = (SLIDESHOW_HEIGHT - min_pad) + buffer
+
             bottom_file = Path(tmpdir) / "bottom.txt"
             bottom_file.write_text(bottom_text, encoding="utf-8")
             bottom_rel = os.path.relpath(bottom_file, ROOT_DIR).replace("\\", "/")
             vf_parts.append(
                 f"drawtext=fontfile='{font_rel}':textfile='{bottom_rel}':"
-                f"fontcolor=black:fontsize=46:x=(w-text_w)/2:y=h-th-320"
+                f"fontcolor=black:fontsize={font_size}:x=(w-text_w)/2:y={y_bottom}"
             )
 
         cmd = [
