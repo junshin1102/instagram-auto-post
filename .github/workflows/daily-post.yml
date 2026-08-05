@@ -1,13 +1,9 @@
 name: Daily Instagram Post
 
 on:
-  schedule:
-    # 毎日 7:00 JST (UTC+9) = 22:00 UTC(前日) に実行
-    - cron: "0 22 * * *"
-    # 毎日 12:00 JST (UTC+9) = 3:00 UTC に実行
-    - cron: "0 3 * * *"
-    # 毎日 20:00 JST (UTC+9) = 11:00 UTC に実行
-    - cron: "0 11 * * *"
+  # 時刻の精度を上げるため、GitHub Actions内蔵のscheduleは使わず、
+  # 外部スケジューラー(cron-job.org)からこのworkflow_dispatchを
+  # 7:00 / 12:00 / 20:00 (JST)に呼び出す運用にしている
   workflow_dispatch: {}
 
 permissions:
