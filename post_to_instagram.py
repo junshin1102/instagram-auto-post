@@ -26,6 +26,10 @@ from pathlib import Path
 import requests
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2.credentials import Credentials as GoogleCredentials
+from googleapiclient.discovery import build as build_google_service
+from googleapiclient.http import MediaFileUpload
 from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
@@ -393,6 +397,59 @@ def upload_video_to_cloudinary(video_path: Path) -> str:
     if "secure_url" not in payload:
         raise RuntimeError(f"Cloudinaryへの動画アップロードに失敗: {payload}")
     return payload["secure_url"]
+
+
+YOUTUBE_UPLOAD_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
+
+def upload_to_youtube_shorts(video_path: Path, caption: str) -> str | None:
+    """同じ動画をYouTube Shortsにも投稿する。認証情報が未設定の場合は何もしない
+    (Instagram投稿の成否には影響させない)。"""
+    client_id = os.environ.get("YOUTUBE_CLIENT_ID")
+    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET")
+    refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN")
+    if not (client_id and client_secret and refresh_token):
+        return None
+
+    try:
+        lines = [line for line in caption.strip().splitlines() if line.strip()]
+        title = lines[0][:95] + " #Shorts" if lines else "Junshin #Shorts"
+        description = caption.strip()[:4900]
+        tags = [w.lstrip("#") for w in caption.split() if w.startswith("#")][:15]
+
+        creds = GoogleCredentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=YOUTUBE_UPLOAD_SCOPES,
+        )
+        creds.refresh(GoogleAuthRequest())
+
+        youtube = build_google_service("youtube", "v3", credentials=creds)
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": title,
+                    "description": description,
+                    "tags": tags,
+                    "categoryId": "22",
+                },
+                "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
+            },
+            media_body=MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True),
+        )
+        response = request.execute()
+        video_id = response["id"]
+        url = f"https://www.youtube.com/shorts/{video_id}"
+        print(f"YouTube Shortsに投稿完了: {url}")
+        return url
+    except Exception as exc:
+        print(f"YouTube Shortsへの投稿に失敗: {exc}", file=sys.stderr)
+        notify_line(f"⚠️ YouTube Shortsへの投稿に失敗しました\n\n{exc}")
+        return None
 
 
 def notify_line(message: str) -> None:
@@ -1063,6 +1120,8 @@ def handle_video_post(video_path: Path) -> None:
     media_id = publish_media(creation_id)
     print(f"投稿完了: media_id={media_id}")
 
+    upload_to_youtube_shorts(processed_path, caption)
+
     VIDEO_POSTED_DIR.mkdir(parents=True, exist_ok=True)
     destination = VIDEO_POSTED_DIR / video_path.name
     video_path.rename(destination)
@@ -1282,6 +1341,7 @@ def main() -> None:
 
         creation_id = create_reels_container(video_url, caption)
         wait_until_ready(creation_id, attempts=60, interval_sec=5)
+        upload_to_youtube_shorts(slideshow_path, caption)
         slideshow_path.unlink(missing_ok=True)
         media_count_label = f"スライドショー({len(image_paths)}枚)"
     else:
