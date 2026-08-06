@@ -1074,7 +1074,6 @@ def handle_video_post(video_path: Path) -> None:
         metadata_path.rename(VIDEO_POSTED_DIR / metadata_path.name)
 
     log_post(destination.name, media_id, caption, raw_metadata)
-    git_commit_and_push("chore: mark video as posted [skip ci]")
     print(f"動画を {destination} に移動し、ログを記録しました。")
 
     first_line = caption.strip().splitlines()[0]
