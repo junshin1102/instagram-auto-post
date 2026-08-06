@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -997,7 +997,48 @@ def handle_video_post(video_path: Path) -> None:
     )
 
 
+SCHEDULED_WINDOWS_JST = [(7, 5), (12, 5), (20, 5)]
+SCHEDULE_WINDOW_MINUTES = 20
+SCHEDULE_DEDUP_HOURS = 3
+
+
+def is_scheduled_run_due() -> bool:
+    """GitHub Actionsのschedule実行(15分おき)の場合のみ、狙った時間帯かどうかを
+    判定する。workflow_dispatch(手動実行)やローカル実行では常にTrueを返す。
+    GitHub Actionsのscheduleはたまに発火しないことがあるため、対象時刻の前後
+    SCHEDULE_WINDOW_MINUTES分は「その回」とみなし、直近SCHEDULE_DEDUP_HOURS
+    時間以内に投稿済みなら二重投稿を避けてスキップする。"""
+    if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+        return True
+
+    now_jst = datetime.utcnow() + timedelta(hours=9)
+    now_minutes = now_jst.hour * 60 + now_jst.minute
+    in_window = any(
+        0 <= (now_minutes - (h * 60 + m)) < SCHEDULE_WINDOW_MINUTES
+        for h, m in SCHEDULED_WINDOWS_JST
+    )
+    if not in_window:
+        return False
+
+    if LOG_PATH.exists():
+        with LOG_PATH.open(encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        if len(rows) > 1:
+            try:
+                last_dt = datetime.fromisoformat(rows[-1][0])
+                if datetime.utcnow() - last_dt < timedelta(hours=SCHEDULE_DEDUP_HOURS):
+                    return False
+            except ValueError:
+                pass
+
+    return True
+
+
 def main() -> None:
+    if not is_scheduled_run_due():
+        print("対象の時間帯外、または直近に投稿済みのためスキップします。")
+        return
+
     video_path = find_next_video()
     if video_path:
         handle_video_post(video_path)
