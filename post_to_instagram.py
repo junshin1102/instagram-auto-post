@@ -241,7 +241,7 @@ def extract_video_thumbnail(video_path: Path) -> Path:
 
 BOTTOM_CTA_PHRASES = [
     "気になる方はプロフィールのリンクからどうぞ",
-    "ヤフオクで購入できます(プロフィールのリンクへ)",
+    "販売中です(プロフィールのリンクへ)",
     "DIYにも業者様の仕入れにも対応しています",
     "1点から購入OK、お気軽にどうぞ",
     "詳しくはプロフィールのリンクをチェック",
@@ -249,11 +249,13 @@ BOTTOM_CTA_PHRASES = [
 
 
 def derive_label_lines(raw_metadata: str | None) -> list[str]:
-    """メモに含まれるヤフオクのURLから、樹種名・商品番号・寸法のラベル行を作る。"""
+    """メモに含まれるヤフオクのURLから、樹種名・商品番号・寸法のラベル行を作る。
+    ヤフオク以外(BASE等)のURLはタイトルの書式が異なり同じ正規表現が
+    使えないため、ラベルなし(空リスト)を返す。"""
     if not raw_metadata:
         return []
     urls = URL_PATTERN.findall(raw_metadata)
-    if not urls:
+    if not urls or not is_yahoo_auction_url(urls[0]):
         return []
     item = fetch_yahoo_auction_item(urls[0])
     if not item:
@@ -439,9 +441,9 @@ BRAND_CONTEXT = """\
 所在地: 新潟県阿賀野市の山林に囲まれた小さな木工房 (2014年creation)
 事業内容: 森つくり / 庭木伐採 / 薪の製造・販売 / 木材販売(業販・DIY向け) / \
 木製品制作(食器・雑貨などの生活道具)
-販売方法: 投稿する木材はすべてヤフオク(Yahoo!オークション)に出品しており、\
-プロフィールのリンクから購入できる。個人のDIYユーザーから、業者のまとめ買い・\
-仕入れまで幅広く対応している。
+販売方法: 投稿する木材はヤフオク(Yahoo!オークション)、または直営の木材専門ストア\
+「Junshin -潤森銘木-」(BASE)に出品しており、プロフィールのリンクから購入できる。\
+個人のDIYユーザーから、業者のまとめ買い・仕入れまで幅広く対応している。
 トーン: 森や木、職人の手仕事への愛情が伝わる、温かみのある丁寧な言葉づかい。\
 派手な煽り文句は避け、素材やものづくりの背景が伝わる説明を大切にする。
 想定フォロワー: 木工・DIY・林業・ナチュラルな暮らしに関心がある人、\
@@ -517,9 +519,10 @@ def find_metadata(image_paths: list[Path]) -> str | None:
 
 
 def resolve_caption_facts(raw_metadata: str | None) -> str | None:
-    """メモの中にヤフオクのURLがあれば、出品ページから樹種・寸法・価格などを
-    自動取得してキャプション生成用の事実情報にする(URL自体はここで消費し、
-    キャプションには含めない)。取得に失敗した場合はメモをそのまま使う。"""
+    """メモの中にヤフオク、またはBASE等の商品URLがあれば、出品ページから
+    樹種・寸法・価格などを自動取得してキャプション生成用の事実情報にする
+    (URL自体はここで消費し、キャプションには含めない)。
+    取得に失敗した場合はメモをそのまま使う。"""
     if not raw_metadata:
         return None
 
@@ -528,12 +531,94 @@ def resolve_caption_facts(raw_metadata: str | None) -> str | None:
         return raw_metadata
 
     notes = URL_PATTERN.sub("", raw_metadata).strip()
-    item = fetch_yahoo_auction_item(urls[0])
-    facts = format_auction_facts(item) if item else None
+    facts = fetch_item_facts_text(urls[0])
     if facts is None:
         return raw_metadata
 
     return f"{facts}\n補足メモ: {notes}" if notes else facts
+
+
+def is_yahoo_auction_url(url: str) -> bool:
+    return "auctions.yahoo.co.jp" in url
+
+
+LD_JSON_PATTERN = re.compile(
+    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.S | re.I,
+)
+OGP_META_PATTERN = re.compile(
+    r'<meta\s+(?:property|name)=["\'](?P<prop>og:title|og:description)["\']\s+'
+    r'content=["\'](?P<content>[^"\']*)["\']',
+    re.I,
+)
+
+
+def fetch_base_item(url: str) -> dict | None:
+    """ヤフオク以外(主にBASEの商品ページ)の情報を、JSON-LD(schema.org Product)
+    や og: タグからベストエフォートで取得する。
+    NOTE: BASEストアが実際に開設され商品ページができた後、このパースが
+    実データに対して正しく動くか要確認(現時点では未検証)。"""
+    try:
+        resp = requests.get(url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=15)
+        resp.raise_for_status()
+    except Exception:
+        return None
+
+    html = resp.text
+    title = None
+    description = None
+    price = None
+
+    for match in LD_JSON_PATTERN.finditer(html):
+        try:
+            data = json.loads(match.group(1))
+        except Exception:
+            continue
+        candidates = data if isinstance(data, list) else [data]
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or candidate.get("@type") != "Product":
+                continue
+            title = title or candidate.get("name")
+            description = description or candidate.get("description")
+            offers = candidate.get("offers")
+            if isinstance(offers, dict):
+                price = price or offers.get("price")
+            break
+
+    for m in OGP_META_PATTERN.finditer(html):
+        if m.group("prop") == "og:title" and not title:
+            title = m.group("content")
+        elif m.group("prop") == "og:description" and not description:
+            description = m.group("content")
+
+    if not title:
+        m = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
+        if m:
+            title = m.group(1).strip()
+
+    if not title:
+        return None
+
+    return {"title": title, "description": description, "price": price}
+
+
+def format_base_item_facts(item: dict) -> str:
+    lines = [f"商品タイトル: {item['title']}"]
+    if item.get("description"):
+        lines.append(f"商品説明: {item['description']}")
+    if item.get("price"):
+        lines.append(f"価格: {item['price']}円")
+    return "\n".join(lines)
+
+
+def fetch_item_facts_text(url: str) -> str | None:
+    """URLのドメインに応じてヤフオク/その他(主にBASE)を判定し、
+    事実情報のテキストを返す。"""
+    if is_yahoo_auction_url(url):
+        item = fetch_yahoo_auction_item(url)
+        return format_auction_facts(item) if item else None
+    item = fetch_base_item(url)
+    return format_base_item_facts(item) if item else None
 
 
 def fetch_yahoo_auction_item(url: str) -> dict | None:
@@ -756,10 +841,11 @@ def generate_caption(image_path: Path, metadata: str | None = None) -> str:
   さりげないCTAなど、パターンを変化させる
 
 【販促(必須)】
-- この投稿の木材はヤフオクで購入できることを、最後の1〜2文で自然に伝えること
+- この投稿の木材は購入できることを、最後の1〜2文で自然に伝えること
   (押し売り感を出さず、「気になる方はプロフィールのリンクからどうぞ」
-  「ヤフオクに出品しています、詳しくはプロフィールへ」のように、\
-  日によって言い回しを変える)
+  「販売中です、詳しくはプロフィールへ」のように、日によって言い回しを変える。\
+  「ヤフオク」等の販路名を断定して書かず、基本はプロフィールのリンクへの\
+  誘導にとどめること(販路は商品によってヤフオク/BASEの両方があるため))
 - DIYで少量欲しい個人と、まとめて仕入れたい業者の両方に向けて、\
   「個人の方でも業者様でも」「1点からでも、まとめてでも」のような\
   一言を混ぜられるとなお良い(毎回でなくてよい)
@@ -988,6 +1074,7 @@ def handle_video_post(video_path: Path) -> None:
         metadata_path.rename(VIDEO_POSTED_DIR / metadata_path.name)
 
     log_post(destination.name, media_id, caption, raw_metadata)
+    git_commit_and_push("chore: mark video as posted [skip ci]")
     print(f"動画を {destination} に移動し、ログを記録しました。")
 
     first_line = caption.strip().splitlines()[0]

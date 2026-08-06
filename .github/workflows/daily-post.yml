@@ -1,13 +1,16 @@
 name: Daily Instagram Post
 
 on:
-  schedule:
-    # GitHub Actionsのscheduleは発火しないことがあるため、15分おきに実行し、
-    # 7:05 / 12:05 / 20:05 (JST) の前後20分以内かどうかをスクリプト側
-    # (is_scheduled_run_due)で判定する自己修復方式にしている。
-    # 対象時間外や、直近3時間以内に投稿済みの場合は何もせず終了する。
-    - cron: "*/15 * * * *"
+  # GitHub Actionsのscheduleトリガーは発火しないことがあると分かったため使わない。
+  # 代わりに、Pythonスクリプト自身が「次の投稿時刻まで待って投稿する」を
+  # 繰り返し、実行時間の上限(6時間)が近づいたら自分自身をworkflow_dispatchで
+  # 再起動して引き継ぐ、自己継続方式にしている。
+  # concurrencyにより、常に1本のジョブだけが動く。
   workflow_dispatch: {}
+
+concurrency:
+  group: daily-post-loop
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -15,6 +18,7 @@ permissions:
 jobs:
   post:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,7 +34,7 @@ jobs:
       - name: Ensure ffmpeg is available
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Post to Instagram
+      - name: Run scheduler loop
         env:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
@@ -39,19 +43,10 @@ jobs:
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-        run: python post_to_instagram.py
-
-      - name: Commit posted image/video + log
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add images/ videos/
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: mark image/video as posted [skip ci]"
-            git push
-          else
-            echo "No changes to commit."
-          fi
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python post_to_instagram.py --loop
 
       - name: Notify LINE on workflow-level failure
         if: failure()
