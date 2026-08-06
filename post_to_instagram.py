@@ -1074,6 +1074,7 @@ def handle_video_post(video_path: Path) -> None:
         metadata_path.rename(VIDEO_POSTED_DIR / metadata_path.name)
 
     log_post(destination.name, media_id, caption, raw_metadata)
+    git_commit_and_push("chore: mark video as posted [skip ci]")
     print(f"動画を {destination} に移動し、ログを記録しました。")
 
     first_line = caption.strip().splitlines()[0]
@@ -1118,6 +1119,100 @@ def is_scheduled_run_due() -> bool:
                 pass
 
     return True
+
+
+MAX_JOB_SECONDS = int(5.5 * 3600)  # GitHub Actionsの6時間上限に対する安全マージン
+LOOP_CHECK_INTERVAL_SECONDS = 300
+
+
+def next_target_datetime(now_jst: datetime) -> datetime:
+    candidates = [
+        now_jst.replace(hour=h, minute=m, second=0, microsecond=0)
+        for h, m in SCHEDULED_WINDOWS_JST
+    ]
+    future = [t for t in candidates if t > now_jst]
+    if future:
+        return min(future)
+    return min(candidates) + timedelta(days=1)
+
+
+def trigger_next_workflow_run() -> None:
+    """自分自身(このワークフロー)をもう一度起動する。GitHub Actionsの
+    実行時間上限(6時間)に達する前に、後続ジョブへバトンタッチするために使う。"""
+    token = os.environ.get("GH_DISPATCH_TOKEN")
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        print("GH_DISPATCH_TOKEN または GITHUB_REPOSITORY が未設定のため、自己再起動できません。", file=sys.stderr)
+        return
+    try:
+        resp = requests.post(
+            f"https://api.github.com/repos/{repo}/actions/workflows/daily-post.yml/dispatches",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={"ref": os.environ.get("GITHUB_REF_NAME", "master")},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        print("後続ジョブを起動しました。")
+    except Exception as exc:
+        print(f"後続ジョブの起動に失敗: {exc}", file=sys.stderr)
+        notify_line(f"⚠️ 自動投稿の後続ジョブ起動に失敗しました\n\n{exc}")
+
+
+def git_commit_and_push(message: str) -> None:
+    """GitHub Actions上でのみ、投稿済みファイルをコミット・pushする。"""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    try:
+        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], cwd=ROOT_DIR, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"],
+            cwd=ROOT_DIR, check=True,
+        )
+        subprocess.run(["git", "add", "images/", "videos/"], cwd=ROOT_DIR, check=True)
+        diff_result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT_DIR)
+        if diff_result.returncode != 0:
+            subprocess.run(["git", "commit", "-m", message], cwd=ROOT_DIR, check=True)
+            subprocess.run(["git", "pull", "--no-edit"], cwd=ROOT_DIR, check=True)
+            subprocess.run(["git", "push"], cwd=ROOT_DIR, check=True)
+    except Exception as exc:
+        print(f"git commit/push に失敗: {exc}", file=sys.stderr)
+
+
+def run_scheduler() -> None:
+    """次の投稿時刻まで待ち、投稿する。実行時間上限が近づいたら
+    後続ジョブを起動して終了する(GitHub Actions上で無期限に続く仕組み)。"""
+    start = time.monotonic()
+    print("スケジューラーを起動しました。", flush=True)
+
+    while True:
+        now_jst = datetime.utcnow() + timedelta(hours=9)
+        target = next_target_datetime(now_jst)
+        wait_seconds = (target - now_jst).total_seconds()
+        print(f"次の投稿予定: {target.isoformat()} (JST)、あと約{int(wait_seconds // 60)}分待機します。", flush=True)
+
+        while wait_seconds > 0:
+            if time.monotonic() - start > MAX_JOB_SECONDS:
+                print("実行時間の上限が近づいたため、後続ジョブへ引き継ぎます。", flush=True)
+                trigger_next_workflow_run()
+                return
+            chunk = min(wait_seconds, LOOP_CHECK_INTERVAL_SECONDS)
+            time.sleep(chunk)
+            wait_seconds -= chunk
+
+        try:
+            main()
+        except Exception as exc:
+            print(f"投稿中にエラーが発生しました: {exc}", file=sys.stderr)
+            notify_line(f"⚠️ Instagram自動投稿でエラーが発生しました\n\n{exc}")
+
+        if time.monotonic() - start > MAX_JOB_SECONDS:
+            print("実行時間の上限が近づいたため、後続ジョブへ引き継ぎます。", flush=True)
+            trigger_next_workflow_run()
+            return
 
 
 def main() -> None:
@@ -1216,6 +1311,7 @@ def main() -> None:
     if auction_id:
         mark_auction_id_posted(auction_id)
 
+    git_commit_and_push("chore: mark image/video as posted [skip ci]")
     print(f"画像を images/posted/ に移動し、ログを記録しました。")
 
     first_line = caption.strip().splitlines()[0]
@@ -1227,7 +1323,10 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
-        main()
+        if "--loop" in sys.argv:
+            run_scheduler()
+        else:
+            main()
     except Exception as exc:
         print(f"エラー: {exc}", file=sys.stderr)
         notify_line(f"⚠️ Instagram自動投稿でエラーが発生しました\n\n{exc}")
