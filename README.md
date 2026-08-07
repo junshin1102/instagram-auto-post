@@ -21,6 +21,7 @@
     (`images/queue/` に手動で置いた画像の場合は、これまで通りカルーセル投稿)
     - 動画の**上の白い余白**に樹種名・商品番号・寸法(例:「ヤマザクラ SKR-512」+「1000mm×230mm×32mm」)
     - 動画の**下の白い余白**に購入を促す一言(数パターンからランダムに選択)
+    - BGMとして [assets/music/warm_acoustic_guitar.mp3](assets/music/warm_acoustic_guitar.mp3) を自動で追加(動画の長さに合わせて、足りなければループ、長ければ途中で終了)
 11. Instagram Graph API で投稿
 12. 投稿済みの商品IDは `images/posted/posted_auction_ids.txt` に記録され、次回以降は選ばれない
 13. 手動追加した画像を使った場合は、`images/posted/` に移動し `posted_log.csv` に記録
@@ -41,12 +42,17 @@ videos/queue/01.txt   ← (任意)ヤフオクURLや樹種メモ。画像と同�
 
 - `videos/queue/` に動画があれば、画像より優先してReelsとして投稿されます
 - `.txt`にヤフオクのURLを書いておくと、画像と同様に樹種名・商品番号・寸法のラベルとロゴが動画にも自動で合成されます(`.txt`がない場合はロゴのみ)
+- 動画に**もともと音声がない場合のみ**、BGM([assets/music/warm_acoustic_guitar.mp3](assets/music/warm_acoustic_guitar.mp3))が自動で追加されます(動画の長さに合わせてループ/トリミング)。撮影時の音声が入っている動画はそのまま使われ、BGMは重ねません
 - キャプションは、動画から自動で切り出した1コマをClaudeに見せて生成します
 - 投稿後、動画は `videos/posted/` に移動されます
 
 動画の合成処理には `ffmpeg` を使用しています。GitHub Actions(Ubuntu)では自動でインストールされますが、ローカルでテストする場合はご自身でインストールが必要です。
 
 出品中の商品をすべて投稿し終えると、その回は「投稿対象なし」としてスキップされます(在庫を増やせば、また自動的に選ばれるようになります)。1日3回投稿するため、在庫459件でも約153日分で一周する計算です。
+
+### BGM
+
+Reels(スライドショー・手動動画とも)に付くBGMは [assets/music/warm_acoustic_guitar.mp3](assets/music/warm_acoustic_guitar.mp3) 固定です(著作権フリー、[Pixabay Content License](https://pixabay.com/service/license-summary/)、商用利用可・クレジット表記不要)。曲を変更したい場合は、著作権フリーの音源ファイルを同じフォルダに置き、[post_to_instagram.py](post_to_instagram.py) 内の `MUSIC_PATH` が指すファイル名を書き換えてください。
 
 ### ハッシュタグ
 

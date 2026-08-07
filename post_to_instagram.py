@@ -65,6 +65,7 @@ SELLER_URL = os.environ.get(
 LOGO_PATH = ROOT_DIR / "assets" / "logo_watermark.png"
 FONT_PATH = ROOT_DIR / "assets" / "fonts" / "NotoSansJP.ttf"
 BOLD_FONT_PATH = ROOT_DIR / "assets" / "fonts" / "NotoSansJP-Bold.ttf"
+MUSIC_PATH = ROOT_DIR / "assets" / "music" / "warm_acoustic_guitar.mp3"
 WATERMARK_MAX_IMAGES = 9
 WATERMARK_WIDTH_RATIO = 0.22
 WATERMARK_MARGIN_RATIO = 0.03
@@ -180,9 +181,24 @@ def probe_video_dimensions(video_path: Path) -> tuple[int, int]:
     return info["width"], info["height"]
 
 
+def has_audio_stream(video_path: Path) -> bool:
+    """動画に音声トラックが含まれているかどうかを返す。"""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "a",
+            "-show_entries", "stream=index", "-of", "csv=p=0", str(video_path),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return bool(result.stdout.strip())
+
+
 def process_video(video_path: Path, label_lines: list[str]) -> Path:
-    """動画の右下にロゴを、(あれば)左上に樹種・寸法ラベルを合成する。"""
+    """動画の右下にロゴを、(あれば)左上に樹種・寸法ラベルを合成する。
+    元の動画に音声がない場合は、固定のBGM(assets/music/)を追加する
+    (動画の長さに合わせて足りなければループ、余れば途中で切る)。"""
     width, _height = probe_video_dimensions(video_path)
+    add_bgm = not has_audio_stream(video_path)
 
     font_size = max(24, int(width * LABEL_FONT_SIZE_RATIO))
     margin = int(width * LABEL_MARGIN_RATIO)
@@ -214,17 +230,18 @@ def process_video(video_path: Path, label_lines: list[str]) -> Path:
         filters.append(f"[1:v]scale={logo_width}:-1[logo]")
         filters.append(f"[{current}][logo]overlay=W-w-{logo_margin}:H-h-{logo_margin}[vout]")
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video_path),
-            "-i", str(LOGO_PATH),
-            "-filter_complex", ";".join(filters),
-            "-map", "[vout]", "-map", "0:a?",
+        cmd = ["ffmpeg", "-y", "-i", str(video_path), "-i", str(LOGO_PATH)]
+        if add_bgm:
+            cmd += ["-stream_loop", "-1", "-i", str(MUSIC_PATH)]
+        cmd += ["-filter_complex", ";".join(filters)]
+        cmd += ["-map", "[vout]", "-map", "2:a" if add_bgm else "0:a?"]
+        cmd += [
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            str(output_path),
         ]
+        if add_bgm:
+            cmd += ["-shortest"]
+        cmd += ["-movflags", "+faststart", str(output_path)]
         subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, check=True)
 
     return output_path
@@ -358,9 +375,13 @@ def build_slideshow_video(
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(list_path),
+            "-stream_loop", "-1", "-i", str(MUSIC_PATH),
             "-vf", ",".join(vf_parts),
+            "-map", "0:v", "-map", "1:a",
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-shortest",
             "-movflags", "+faststart",
             str(output_path),
         ]
@@ -445,6 +466,7 @@ def upload_to_youtube_shorts(video_path: Path, caption: str) -> str | None:
         video_id = response["id"]
         url = f"https://www.youtube.com/shorts/{video_id}"
         print(f"YouTube Shortsに投稿完了: {url}")
+        notify_line(f"✅ YouTube Shortsに投稿しました\n\n{url}")
         return url
     except Exception as exc:
         print(f"YouTube Shortsへの投稿に失敗: {exc}", file=sys.stderr)
