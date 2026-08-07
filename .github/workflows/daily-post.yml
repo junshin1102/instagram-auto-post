@@ -1,14 +1,10 @@
 name: Daily Instagram Post
 
 on:
-  schedule:
-    # GitHub Actionsのscheduleは発火しないことがあるため、15分おきに実行し、
-    # 7:05 / 12:05 / 20:05 (JST) の前後20分以内かどうかをスクリプト側
-    # (is_scheduled_run_due)で判定する自己修復方式にしている。
-    # 対象時間外や、直近3時間以内に投稿済みの場合は何もせず終了する。
-    # (Actionsを常時稼働のサーバー代わりに使う自己継続方式は規約に抵触する
-    # おそれがあり強制終了されたため、この短時間実行を繰り返す方式に戻した)
-    - cron: "*/15 * * * *"
+  # GitHub Actionsのscheduleは15分おきに設定しても数時間単位で発火しないことが
+  # 実際に確認されたため、定期実行はこのワークフローではなく、ローカルPCの
+  # Windowsタスクスケジューラ(run_post.bat / JunshinInstagramPost_0705,1205,2005)
+  # で行っている。このワークフローは手動実行・動作確認用としてのみ残す。
   workflow_dispatch: {}
 
 permissions:

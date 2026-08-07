@@ -6,7 +6,14 @@
 
 **基本的に何も手を動かさなくても、毎日自動で投稿されます。**
 
-1. 毎日 **7:00 / 12:00 / 20:00 (JST)** の3回、GitHub Actions が起動する
+1. 毎日 **7:05 / 12:05 / 20:05** の3回、このPC上のWindowsタスクスケジューラが\
+   `run_post.bat`(`python post_to_instagram.py`)を起動する\
+   (以前はGitHub Actionsのscheduleを使っていましたが、数時間単位で発火しないことが\
+   実際に確認されたため、ローカルのタスクスケジューラ方式に切り替えました。\
+   **このPCが7:05〜20:05の間、電源が入っている(スリープしていない)必要があります**。\
+   タスク名: `JunshinInstagramPost_0705` / `_1205` / `_2005`。実行ログは\
+   [task_log.txt](task_log.txt)に追記されます。GitHub Actions側のワークフローは\
+   手動実行・動作確認用としてのみ残しています)
 2. **`videos/queue/` に動画があれば、それを優先してReelsとして投稿する**(下記「Reels」参照)
 3. 動画がなければ、`images/queue/` に手動で追加した画像があればそれを使う(通常は空でOK)
 4. どちらも空の場合、[ヤフオクの出品者ページ](https://auctions.yahoo.co.jp/seller/7F3TQFS83hRevxWX9wK4z2ZvPzj3t?user_type=c)(現在459件)から、\
