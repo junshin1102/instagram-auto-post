@@ -260,12 +260,20 @@ def extract_video_thumbnail(video_path: Path) -> Path:
     return thumbnail_path
 
 
+# 動画下部の白い余白に1行で入る文言。読み手は家具職人・建具職人・工務店・木工所が中心で、
+# 売上の約7割はリピーター(実購入者は15か月で233人)。「お気軽にどうぞ」のような
+# どの木材屋でも言える文言はやめ、プロが材を選ぶときに実際に気にする点を書く。
+# いずれも出品ページに記載のある事実、または自社一貫生産という実態に基づく内容のみ。
+# 1行で横にはみ出さないよう、全角20文字以内に収めること(折り返し処理はない)。
 BOTTOM_CTA_PHRASES = [
-    "気になる方はプロフィールのリンクからどうぞ",
-    "販売中です(プロフィールのリンクへ)",
-    "DIYにも業者様の仕入れにも対応しています",
-    "1点から購入OK、お気軽にどうぞ",
-    "詳しくはプロフィールのリンクをチェック",
+    "乾燥済み。届いてすぐ削れます",
+    "家具・建具屋さんに卸してる乾燥具合",
+    "伐採から乾燥まで、全部自社の山で",
+    "ワンカット無料。送料を抑えられます",
+    "反りが落ち着いてから出してます",
+    "チップにされる前の国産広葉樹です",
+    "この木がどの山から来たか、言えます",
+    "1枚から。まとめての仕入れも",
 ]
 
 
@@ -947,7 +955,8 @@ def generate_caption(image_path: Path, metadata: str | None = None) -> str:
 
     response = client.messages.create(
         model="claude-sonnet-5",
-        max_tokens=1024,
+        # 思考トークンで使い切って本文が返らないことがあるため、余裕を持たせる
+        max_tokens=3000,
         messages=[
             {
                 "role": "user",
@@ -965,8 +974,14 @@ def generate_caption(image_path: Path, metadata: str | None = None) -> str:
             }
         ],
     )
-    text_block = next(block for block in response.content if block.type == "text")
-    body = text_block.text.strip()
+    text_blocks = [block for block in response.content if block.type == "text"]
+    if not text_blocks:
+        # 応答が思考ブロックのみで本文が無い場合。next()のままだとStopIterationで
+        # 落ちて原因が分からないため、状況が分かる形で失敗させる
+        raise RuntimeError(
+            f"本文が生成されませんでした (stop_reason={response.stop_reason})"
+        )
+    body = text_blocks[0].text.strip()
     return enforce_limits(f"{body}\n\n{FIXED_HASHTAGS}")
 
 
