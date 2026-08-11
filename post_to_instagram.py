@@ -302,6 +302,8 @@ def derive_label_lines(raw_metadata: str | None) -> list[str]:
 
 SLIDESHOW_WIDTH = 1080
 SLIDESHOW_HEIGHT = 1920
+# Noto Sans JPの実際の行送り(em比)。フォントサイズの上限を決めるのに使う
+LINE_HEIGHT_RATIO = 1.6
 
 
 def compute_min_padding(image_paths: list[Path]) -> int:
@@ -353,22 +355,25 @@ def build_slideshow_video(
 
         if top_text:
             line_count = top_text.count("\n") + 1
-            # 余白の高さに収まるよう、行数に応じてフォントサイズを決める
-            font_size = max(24, min(48, int((min_pad - buffer * 2) / line_count / 1.35)))
-            block_height = int(line_count * font_size * 1.35)
-            y_top = max(20, min_pad - buffer - block_height)
+            # 余白の高さに収まるよう、行数に応じてフォントサイズを決める。
+            # 行送りはNoto Sans JPの実測に合わせて1.6倍で見積もる
+            # (1.35だと過小評価で、正方形に近い画像=余白が狭いときに写真へ食い込む)
+            font_size = max(24, min(48, int((min_pad - buffer * 2) / line_count / LINE_HEIGHT_RATIO)))
 
             top_file = Path(tmpdir) / "top.txt"
             top_file.write_text(top_text, encoding="utf-8")
             top_rel = os.path.relpath(top_file, ROOT_DIR).replace("\\", "/")
+            # yはffmpegが実際に描画した高さ(text_h)から逆算し、テキストの下端が
+            # 必ず写真の上端より buffer 分だけ上に来るようにする。
+            # 概算のblock_heightで位置決めすると見積もり誤差がそのままズレになる
             vf_parts.append(
                 f"drawtext=fontfile='{font_rel}':textfile='{top_rel}':"
                 f"fontcolor=black:fontsize={font_size}:line_spacing=8:"
-                f"x=(w-text_w)/2:y={y_top}"
+                f"x=(w-text_w)/2:y='max({buffer}\\,{min_pad - buffer}-text_h)'"
             )
 
         if bottom_text:
-            font_size = max(24, min(46, int((min_pad - buffer * 2) / 1.35)))
+            font_size = max(24, min(46, int((min_pad - buffer * 2) / LINE_HEIGHT_RATIO)))
             y_bottom = (SLIDESHOW_HEIGHT - min_pad) + buffer
 
             bottom_file = Path(tmpdir) / "bottom.txt"
