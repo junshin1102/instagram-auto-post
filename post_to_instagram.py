@@ -506,6 +506,29 @@ def notify_line(message: str) -> None:
     except Exception:
         pass
 
+# 買い手は「広葉樹」ではなく樹種名(ケヤキ・ヤマザクラ等)で検索する。
+# 実測でも「広葉樹」での落札は180日で19件しかなく、検索語として機能していない。
+# Instagramはタグ検索が強いので、樹種名タグを先頭(最も効く位置)に差し込む。
+SPECIES_ALIASES = {
+    "ケヤキ": "欅", "サクラ": "桜", "ヤマザクラ": "山桜", "クリ": "栗",
+    "クルミ": "胡桃", "オニグルミ": "鬼胡桃", "トチ": "栃", "ホオ": "朴",
+    "ブナ": "橅", "カバ": "樺", "キハダ": "黄檗", "エンジュ": "槐",
+    "イチョウ": "銀杏", "ウメ": "梅", "カエデ": "楓", "イタヤカエデ": "板屋楓",
+}
+
+
+def build_species_hashtags(species: str | None) -> str:
+    """樹種名のハッシュタグ(カナ・漢字・「樹種名+一枚板」)を作る。
+    買い手の検索語に直接当てるための、最も重要なタグ群。"""
+    if not species:
+        return ""
+    tags = [f"#{species}", f"#{species}一枚板"]
+    alias = SPECIES_ALIASES.get(species)
+    if alias:
+        tags.append(f"#{alias}")
+    return " ".join(tags)
+
+
 FIXED_HASHTAGS = """\
 #新潟で木の伐採　お見積り致します
 #林業　放置された里山を再生
@@ -1004,7 +1027,12 @@ def generate_caption(image_path: Path, metadata: str | None = None) -> str:
             f"本文が生成されませんでした (stop_reason={response.stop_reason})"
         )
     body = text_blocks[0].text.strip()
-    return enforce_limits(f"{body}\n\n{FIXED_HASHTAGS}")
+    # 事実情報(商品タイトル)から樹種名を取り、検索されるタグを先頭に置く
+    species_tags = build_species_hashtags(
+        extract_species_name(metadata) if metadata else None
+    )
+    hashtags = f"{species_tags}\n{FIXED_HASHTAGS}" if species_tags else FIXED_HASHTAGS
+    return enforce_limits(f"{body}\n\n{hashtags}")
 
 
 def enforce_limits(caption: str) -> str:
