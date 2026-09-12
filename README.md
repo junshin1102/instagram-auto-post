@@ -131,6 +131,56 @@ Reels(スライドショー・手動動画とも)に付くBGMは [assets/music/w
 
 ---
 
+## 新しいPCへの移行(PCが壊れた・買い替えたとき)
+
+### GitHubから戻るもの / 戻らないもの
+
+| | 内容 |
+|---|---|
+| ✅ 戻る | コード・ロゴ・フォント・BGM・投稿済み画像・投稿ログ |
+| ❌ 戻らない | **`.env`(全APIキー)**・タスクスケジューラの登録・Python/ffmpeg |
+
+`.env` は鍵そのものなので、意図的にGitHubへ上げていません。**鍵は別の場所
+(パスワード管理アプリ等)に控えておいてください。** ここが移行時間の大半を決めます。
+
+### 手順
+
+```bash
+git clone https://github.com/junshin1102/instagram-auto-post.git
+cd instagram-auto-post
+pip install -r requirements.txt
+```
+
+さらに ffmpeg をインストールします(動画の合成に必須)。
+
+次に `.env.example` を `.env` にコピーし、鍵を埋めます。
+**`.env.example` に載っているものが、必要な鍵のすべてです。**
+
+特に注意:
+
+- `IG_ACCESS_TOKEN` は **60日で失効**します
+- `YOUTUBE_*` の3つは、**1つでも欠けるとエラーを出さずにYouTube投稿だけ静かに止まります**
+  (`YOUTUBE_REFRESH_TOKEN` の取り直しには OAuth 認証のやり直しが必要)
+
+最後に、投稿を毎日動かすためのタスクを登録します。
+
+```
+schtasks /create /tn "JunshinInstagramPost_2005" /tr "C:\path\to\run_post.bat" /sc daily /st 20:05
+```
+
+### 移行前にやっておくべきこと
+
+`.env` に **`SYNC_STATE_TO_GITHUB=true`** を設定しておいてください。
+
+これが無効のままだと、「どの商品をすでに投稿したか」の記録
+(`images/posted/posted_auction_ids.txt`)がPCの中にしか残りません。
+その状態でPCが壊れると、**新しいPCは過去に投稿済みの商品を、もう一度投稿し直します。**
+
+有効にしておけば、投稿のたびに記録がGitHubへ反映され、
+新PCで `git clone` した時点で正しい続きから再開できます。
+
+---
+
 ## セットアップ手順
 
 ### 1. このフォルダをGitHubリポジトリにする
