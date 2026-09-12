@@ -16,6 +16,7 @@ import mimetypes
 import os
 import random
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,10 @@ QUEUE_DIR = ROOT_DIR / "images" / "queue"
 POSTED_DIR = ROOT_DIR / "images" / "posted"
 LOG_PATH = POSTED_DIR / "posted_log.csv"
 POSTED_AUCTION_IDS_PATH = POSTED_DIR / "posted_auction_ids.txt"
+STATE_DIR = ROOT_DIR / "state"
+HEARTBEAT_PATH = STATE_DIR / "heartbeat.json"
+HEARTBEAT_HISTORY_PATH = STATE_DIR / "heartbeat_history.csv"
+HEARTBEAT_HISTORY_LIMIT = 400
 VIDEO_QUEUE_DIR = ROOT_DIR / "videos" / "queue"
 VIDEO_POSTED_DIR = ROOT_DIR / "videos" / "posted"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
@@ -1196,7 +1201,7 @@ def log_post(image_name: str, media_id: str, caption: str, metadata: str | None 
         ])
 
 
-def handle_video_post(video_path: Path) -> None:
+def handle_video_post(video_path: Path) -> tuple[str, str]:
     """videos/queue/ にある動画をReelsとして投稿する。"""
     print(f"投稿対象(動画): {video_path.name}")
     raw_metadata = find_metadata([video_path])
@@ -1242,6 +1247,7 @@ def handle_video_post(video_path: Path) -> None:
         f"✅ Instagramに投稿しました(Reels)\n\n{first_line}\n\n"
         f"https://www.instagram.com/junshin_industry/"
     )
+    return "posted", f"media_id={media_id} Reels({destination.name})"
 
 
 # 1日1回。実測(Insights 40件)では 1本/日 のリーチ中央値773に対し、
@@ -1284,17 +1290,71 @@ def is_scheduled_run_due() -> bool:
     return True
 
 
-def git_commit_and_push(message: str) -> None:
-    """GitHub Actions上でのみ、投稿済みファイルをコミット・pushする。"""
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        return
+def write_heartbeat(status: str, detail: str) -> None:
+    """この回の実行結果を state/heartbeat.json に必ず書き残す。
+
+    投稿が成功したかどうかに関わらず「いつ動いたか」を残すのが目的。
+    これが無いと、仕組みが止まっていても外から気づけない。
+    status は "posted"(投稿した) / "skipped"(動いたが投稿対象なし) /
+    "error"(失敗) のいずれか。"""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.utcnow() + timedelta(hours=9)
+    record = {
+        "at": now.isoformat(timespec="seconds"),
+        "status": status,
+        "detail": detail[:500],
+        "host": socket.gethostname(),
+    }
     try:
-        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], cwd=ROOT_DIR, check=True)
-        subprocess.run(
-            ["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"],
-            cwd=ROOT_DIR, check=True,
+        HEARTBEAT_PATH.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        subprocess.run(["git", "add", "images/", "videos/"], cwd=ROOT_DIR, check=True)
+        is_new = not HEARTBEAT_HISTORY_PATH.exists()
+        with HEARTBEAT_HISTORY_PATH.open("a", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            if is_new:
+                writer.writerow(["at", "status", "detail", "host"])
+            writer.writerow([record["at"], status, record["detail"], record["host"]])
+        trim_heartbeat_history()
+    except OSError as exc:
+        print(f"heartbeatの書き込みに失敗: {exc}", file=sys.stderr)
+
+
+def trim_heartbeat_history() -> None:
+    """履歴が際限なく伸びないよう、直近分だけ残す。"""
+    try:
+        with HEARTBEAT_HISTORY_PATH.open(encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+    except OSError:
+        return
+    if len(rows) <= HEARTBEAT_HISTORY_LIMIT + 1:
+        return
+    header, body = rows[0], rows[1:]
+    with HEARTBEAT_HISTORY_PATH.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(body[-HEARTBEAT_HISTORY_LIMIT:])
+
+
+def git_commit_and_push(message: str) -> None:
+    """投稿済みファイルと実行記録をコミット・pushする。
+
+    GitHub Actions上では常に実行する。ローカル(Windowsタスクスケジューラ)からは、
+    .env に SYNC_STATE_TO_GITHUB=true を設定した場合のみ実行する。これを有効に
+    しておくと、投稿が動いているかをGitHub側から確認できるようになる。"""
+    on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    sync_enabled = os.environ.get("SYNC_STATE_TO_GITHUB", "").lower() == "true"
+    if not on_actions and not sync_enabled:
+        return
+    STATE_DIR.mkdir(parents=True, exist_ok=True)   # git add の対象を必ず存在させる
+    try:
+        if on_actions:
+            subprocess.run(["git", "config", "user.name", "github-actions[bot]"], cwd=ROOT_DIR, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"],
+                cwd=ROOT_DIR, check=True,
+            )
+        subprocess.run(["git", "add", "images/", "videos/", "state/"], cwd=ROOT_DIR, check=True)
         diff_result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT_DIR)
         if diff_result.returncode != 0:
             subprocess.run(["git", "commit", "-m", message], cwd=ROOT_DIR, check=True)
@@ -1304,15 +1364,14 @@ def git_commit_and_push(message: str) -> None:
         print(f"git commit/push に失敗: {exc}", file=sys.stderr)
 
 
-def main() -> None:
+def main() -> tuple[str, str]:
     if not is_scheduled_run_due():
         print("対象の時間帯外、または直近に投稿済みのためスキップします。")
-        return
+        return "skipped", "対象の時間帯外、または直近に投稿済み"
 
     video_path = find_next_video()
     if video_path:
-        handle_video_post(video_path)
-        return
+        return handle_video_post(video_path)
 
     image_paths = find_next_entry()
     auction_id = None
@@ -1325,19 +1384,19 @@ def main() -> None:
         auction_url = pick_random_unposted_auction(SELLER_URL)
         if not auction_url:
             print("images/queue/ に画像がなく、出品中の商品もすべて投稿済みのようです。処理をスキップします。")
-            return
+            return "skipped", "投稿対象なし(出品中の商品はすべて投稿済み)"
 
         print(f"出品者ページからランダムに選びました: {auction_url}")
         item = fetch_yahoo_auction_item(auction_url)
         if not item:
             print(f"商品情報の取得に失敗しました: {auction_url}", file=sys.stderr)
-            return
+            return "error", f"商品情報の取得に失敗: {auction_url}"
 
         auction_id = item["auctionId"]
         image_paths = download_auction_images(item, f"auto-{auction_id}")
         if not image_paths:
             print(f"画像のダウンロードに失敗しました: {auction_url}", file=sys.stderr)
-            return
+            return "error", f"画像のダウンロードに失敗: {auction_url}"
 
         raw_metadata = auction_url
         caption_facts = format_auction_facts(item)
@@ -1409,12 +1468,18 @@ def main() -> None:
         f"✅ Instagramに投稿しました\n\n{first_line}\n\n{media_count_label}\n"
         f"https://www.instagram.com/junshin_industry/"
     )
+    return "posted", f"media_id={media_id} {media_count_label}"
 
 
 if __name__ == "__main__":
     try:
-        main()
+        run_status, run_detail = main()
     except Exception as exc:
+        write_heartbeat("error", f"{type(exc).__name__}: {exc}")
+        git_commit_and_push("chore: record run heartbeat [skip ci]")
         print(f"エラー: {exc}", file=sys.stderr)
         notify_line(f"⚠️ Instagram自動投稿でエラーが発生しました\n\n{exc}")
         sys.exit(1)
+    else:
+        write_heartbeat(run_status, run_detail)
+        git_commit_and_push("chore: record run heartbeat [skip ci]")

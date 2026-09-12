@@ -38,3 +38,8 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+
+# --- 生存確認ツールの実行時ファイル ---
+tools/daily_check/checks.json
+tools/daily_check/last_result.json
+tools/daily_check/health_check_log.txt

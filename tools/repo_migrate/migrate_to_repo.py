@@ -373,6 +373,64 @@ def cmd_prepare(folder: Path, push: bool, repo_name: str | None, force_secrets: 
     return 0
 
 
+def cmd_all(root: Path, push: bool) -> int:
+    """親フォルダの下にあるプロジェクトを、まとめて退避させる。
+
+    鍵が見つかったものは push せずに飛ばし、最後にまとめて報告する。
+    1件の失敗で全体を止めないのが狙い。"""
+    if not root.is_dir():
+        print(f"フォルダが見つかりません: {root}", file=sys.stderr)
+        return 1
+
+    children = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    if not children:
+        print(f"{root} の直下にフォルダがありません。")
+        return 1
+
+    print(f"対象 {len(children)} 件をまとめて処理します。")
+    print("(鍵が見つかったものは push せず、最後に一覧で報告します)\n")
+
+    done: list[str] = []
+    blocked: list[str] = []
+    failed: list[str] = []
+
+    for index, child in enumerate(children, start=1):
+        print("=" * 70)
+        print(f"[{index}/{len(children)}] {child.name}")
+        print("=" * 70)
+        code = cmd_prepare(child, push, None, force_secrets=False)
+        if code == 0:
+            done.append(child.name)
+        elif code == 2:
+            blocked.append(child.name)
+        else:
+            failed.append(child.name)
+        print()
+
+    print("=" * 70)
+    print("まとめ")
+    print("=" * 70)
+    verb = "退避しました" if push else "下準備できました"
+    print(f"  ✅ {verb}: {len(done)}件")
+    for name in done:
+        print(f"      {name}")
+    if blocked:
+        print(f"  ⛔ 鍵が見つかったため保留: {len(blocked)}件")
+        for name in blocked:
+            print(f"      {name}")
+        print("      上のログに対処法が出ています。直してから個別に実行してください:")
+        print(f'        python migrate_to_repo.py prepare "{root / blocked[0]}" --push')
+    if failed:
+        print(f"  ⚠️ 処理できませんでした: {len(failed)}件")
+        for name in failed:
+            print(f"      {name}")
+    if not push and done:
+        print()
+        print("  内容に問題がなければ、--push を付けて本番実行してください:")
+        print(f'    python migrate_to_repo.py all "{root}" --push')
+    return 0 if not failed else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="ローカルにしか無いプロジェクトを、鍵を漏らさずGitHubへ退避させる",
@@ -389,7 +447,13 @@ def main() -> int:
     prepare.add_argument("--force-secrets", action="store_true",
                          help="鍵の検出が誤検出だと確認できた場合のみ使う")
 
+    every = sub.add_parser("all", help="親フォルダ配下を、まとめて退避させる")
+    every.add_argument("folder", help="プロジェクトが並んでいる親フォルダ")
+    every.add_argument("--push", action="store_true", help="実際にコミットしてGitHubへpushする")
+
     args = parser.parse_args()
+    if args.command == "all":
+        return cmd_all(Path(args.folder).expanduser().resolve(), args.push)
     if args.command == "scan":
         return cmd_scan(Path(args.folder).expanduser().resolve())
     return cmd_prepare(
