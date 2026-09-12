@@ -373,6 +373,132 @@ def cmd_prepare(folder: Path, push: bool, repo_name: str | None, force_secrets: 
     return 0
 
 
+# プロジェクトが置かれがちな場所。上から順に探す。
+SEARCH_ROOTS = [
+    "~/Desktop", "~/Documents", "~/Downloads", "~/projects", "~/dev", "~/src",
+    "~/OneDrive/デスクトップ", "~/OneDrive/Desktop", "~/OneDrive/ドキュメント",
+    "~/OneDrive/Documents", "~", "C:/projects", "C:/dev", "C:/work",
+]
+# 探索から外すフォルダ名(中に入らない)
+SKIP_DIR_NAMES = {
+    "node_modules", "venv", ".venv", "env", "site-packages", "AppData",
+    "__pycache__", ".git", ".cache", "dist", "build", ".next", "Library",
+    "Program Files", "Windows", ".vscode", ".idea", "vendor", ".pnpm-store",
+}
+# これらが直下にあれば「プロジェクト」とみなす
+PROJECT_MARKERS = {
+    "requirements.txt", "package.json", "pyproject.toml", "Gemfile",
+    "go.mod", "Cargo.toml", "composer.json",
+}
+PROJECT_SUFFIXES = {".py", ".js", ".ts", ".ps1", ".bat", ".rb", ".go", ".php", ".sh"}
+MAX_SEARCH_DEPTH = 3
+
+
+def looks_like_project(folder: Path) -> bool:
+    """直下にコードがあれば、プロジェクトとみなす。"""
+    if (folder / ".git").is_dir():
+        return True
+    try:
+        for entry in folder.iterdir():
+            if entry.is_file() and (
+                entry.name in PROJECT_MARKERS or entry.suffix.lower() in PROJECT_SUFFIXES
+            ):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def discover_projects() -> list[Path]:
+    """よくある置き場所からプロジェクトらしいフォルダを探す。
+
+    見つけたプロジェクトの中は、それ以上掘らない(サブモジュール等を
+    別プロジェクトとして二重に拾わないため)。"""
+    found: list[Path] = []
+    seen: set[Path] = set()
+
+    def walk(folder: Path, depth: int) -> None:
+        if depth > MAX_SEARCH_DEPTH or folder in seen:
+            return
+        seen.add(folder)
+        if looks_like_project(folder):
+            found.append(folder)
+            return                      # プロジェクトの中は掘らない
+        try:
+            children = [c for c in folder.iterdir() if c.is_dir()]
+        except OSError:
+            return
+        for child in children:
+            if child.name in SKIP_DIR_NAMES or child.name.startswith("."):
+                continue
+            walk(child, depth + 1)
+
+    for raw in SEARCH_ROOTS:
+        root = Path(raw).expanduser()
+        if not root.is_dir():
+            continue
+        try:
+            children = [c for c in root.iterdir() if c.is_dir()]
+        except OSError:
+            continue
+        for child in children:
+            if child.name in SKIP_DIR_NAMES or child.name.startswith("."):
+                continue
+            walk(child, 1)
+
+    return sorted(set(found))
+
+
+def cmd_auto(push: bool) -> int:
+    """置き場所を指定しなくても、自分でプロジェクトを探して退避する。"""
+    print("プロジェクトを探しています...")
+    projects = discover_projects()
+    if not projects:
+        print("見つかりませんでした。フォルダを直接指定してください:")
+        print('  python migrate_to_repo.py all "C:\\Users\\あなた\\projects"')
+        return 1
+
+    print(f"\n{len(projects)} 件見つかりました:\n")
+    for path in projects:
+        marker = " (git済み)" if (path / ".git").is_dir() else ""
+        print(f"  {path}{marker}")
+
+    if not push:
+        print("\n下準備だけ行います(まだGitHubには上げません)。\n")
+    else:
+        print("\nGitHubへ退避します(private リポジトリとして作成されます)。\n")
+
+    done: list[str] = []
+    blocked: list[str] = []
+    failed: list[str] = []
+    for index, path in enumerate(projects, start=1):
+        print("=" * 70)
+        print(f"[{index}/{len(projects)}] {path}")
+        print("=" * 70)
+        code = cmd_prepare(path, push, None, force_secrets=False)
+        (done if code == 0 else blocked if code == 2 else failed).append(str(path))
+        print()
+
+    print("=" * 70)
+    print("まとめ")
+    print("=" * 70)
+    print(f"  ✅ {'退避しました' if push else '下準備できました'}: {len(done)}件")
+    for name in done:
+        print(f"      {name}")
+    if blocked:
+        print(f"  ⛔ 鍵が見つかったため保留: {len(blocked)}件")
+        for name in blocked:
+            print(f"      {name}")
+    if failed:
+        print(f"  ⚠️ 処理できませんでした: {len(failed)}件")
+        for name in failed:
+            print(f"      {name}")
+    if not push and done:
+        print("\n  問題なければ本番実行してください:")
+        print("    python migrate_to_repo.py auto --push")
+    return 0 if not failed else 1
+
+
 def cmd_all(root: Path, push: bool) -> int:
     """親フォルダの下にあるプロジェクトを、まとめて退避させる。
 
@@ -451,7 +577,12 @@ def main() -> int:
     every.add_argument("folder", help="プロジェクトが並んでいる親フォルダ")
     every.add_argument("--push", action="store_true", help="実際にコミットしてGitHubへpushする")
 
+    auto = sub.add_parser("auto", help="置き場所を指定せず、自動で探して退避する")
+    auto.add_argument("--push", action="store_true", help="実際にコミットしてGitHubへpushする")
+
     args = parser.parse_args()
+    if args.command == "auto":
+        return cmd_auto(args.push)
     if args.command == "all":
         return cmd_all(Path(args.folder).expanduser().resolve(), args.push)
     if args.command == "scan":
